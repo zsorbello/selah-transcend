@@ -244,6 +244,53 @@ function hasAccess(userTier, requiredTier, isTrialActive) {
   return (TIER_LEVELS[userTier]||0) >= (TIER_LEVELS[requiredTier]||0);
 }
 
+// Guided reflection: segment length and daily starts per tier (trial = active free trial)
+const REFLECT_SESSION_SEC = 15 * 60;
+function getDailyReflectLimit(tier, isTrialActive) {
+  if (isTrialActive) return 2;
+  const map = { free: 0, foundation: 3, growth: 5, deep: Infinity };
+  return map[tier] ?? 0;
+}
+
+function formatSessionCountdown(totalSec) {
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// Shown when user has used all reflection starts for today
+function DailyReflectLimitNudge({ C, font, onUpgrade, used, limit, isTrial }) {
+  return (
+    <div style={{ background:`${C.amber}08`, border:`1.5px solid ${C.amber}33`,
+      borderRadius:"12px", padding:"24px 20px", textAlign:"center", margin:"20px 0" }}>
+      <div style={{ fontSize:"32px", marginBottom:"12px" }}>🌿</div>
+      <h3 style={{ color:C.textPrimary, fontSize:"16px", fontWeight:"normal",
+        fontFamily:font, margin:"0 0 8px" }}>
+        You have used today&apos;s reflections
+      </h3>
+      <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
+        lineHeight:"1.8", margin:"0 0 16px" }}>
+        {isTrial
+          ? `Your trial includes ${limit} guided reflections per day. Come back tomorrow, or upgrade for more.`
+          : limit <= 3
+            ? `The Foundation plan includes ${limit} reflections per day. Upgrade to Growth or Deep for more daily time with Selah.`
+            : `Your plan includes ${limit} reflections per day. Upgrade to Deep for unlimited daily reflections.`}
+      </p>
+      <p style={{ color:C.textMuted, fontSize:"11px", margin:"0 0 16px" }}>
+        {used} of {limit} used today
+      </p>
+      <button onClick={onUpgrade} style={{
+        background:C.accent, border:"none", borderRadius:"3px",
+        color:"#fff", fontSize:"10px", letterSpacing:"3px",
+        textTransform:"uppercase", padding:"14px 32px", cursor:"pointer",
+        fontFamily:font, fontStyle:"italic",
+        boxShadow:`0 2px 12px ${C.accent}33` }}>
+        View Plans
+      </button>
+    </div>
+  );
+}
+
 // Upgrade prompt shown when user hits a paywall
 function UpgradeGate({ C, font, feature, requiredTier, onUpgrade }) {
   const tierNames = { foundation:"Foundation ($6/mo)", growth:"Growth ($12/mo)", deep:"Deep Reflection ($15/mo)" };
@@ -6687,7 +6734,7 @@ function HeavyDayScreen({ C, font, onClose, faithLevel, userName }) {
   return null;
 }
 
-function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onSessionComplete, onboardingAnswers, userName, isMinorUser, tier, sessionHistory, seasonalContext, setBenchItems }) {
+function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onSessionComplete, onboardingAnswers, userName, isMinorUser, tier, sessionHistory, seasonalContext, setBenchItems, tryConsumeReflectSlot, onUpgrade, reflectSlotsInfo, isTrialForLimit }) {
   const [phase,setPhase]=useState("entry");
   const [cat,setCat]=useState(null);
   const [freeText,setFreeText]=useState("");
@@ -6697,6 +6744,11 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
   const [crisis,setCrisis]=useState(false);
   const [depth,setDepth]=useState(0);
   const [summary,setSummary]=useState({});
+  const [dailyLimitHit,setDailyLimitHit]=useState(false);
+  const [sessionSecondsLeft,setSessionSecondsLeft]=useState(REFLECT_SESSION_SEC);
+  const [sessionTimeUp,setSessionTimeUp]=useState(false);
+  const sessionTimerRef=useRef(null);
+  const reflectStartLock=useRef(false);
   const histRef=useRef([]);
   const bottomRef=useRef(null);
   const inputRef=useRef(null);
@@ -6764,6 +6816,35 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
 
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[msgs,loading]);
 
+  useEffect(() => {
+    if (phase !== "session" || sessionTimeUp) {
+      if (sessionTimerRef.current) {
+        clearInterval(sessionTimerRef.current);
+        sessionTimerRef.current = null;
+      }
+      return;
+    }
+    sessionTimerRef.current = setInterval(() => {
+      setSessionSecondsLeft((sec) => {
+        if (sec <= 1) {
+          if (sessionTimerRef.current) {
+            clearInterval(sessionTimerRef.current);
+            sessionTimerRef.current = null;
+          }
+          setSessionTimeUp(true);
+          return 0;
+        }
+        return sec - 1;
+      });
+    }, 1000);
+    return () => {
+      if (sessionTimerRef.current) {
+        clearInterval(sessionTimerRef.current);
+        sessionTimerRef.current = null;
+      }
+    };
+  }, [phase, sessionTimeUp]);
+
   const onboardCtx = onboardingAnswers ? [
     onboardingAnswers.name && `Their name is ${onboardingAnswers.name}.`,
     onboardingAnswers.reasons && `They came to Selah for: ${Array.isArray(onboardingAnswers.reasons)?onboardingAnswers.reasons.join(", "):onboardingAnswers.reasons}.`,
@@ -6826,6 +6907,15 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
   const sysPrompt=`You are Selah — a faith-rooted clarity companion. Help people collect thoughts, reflect clearly, and move steadily. CRITICAL: You are NOT a therapist, counselor, or medical provider. Never diagnose, prescribe, or provide medical/clinical advice. If someone describes symptoms, encourage them to see a licensed professional. Never claim to replace professional care. ${toneInstruction} ${faithLevel>=2?"Reference scripture naturally when it adds clarity.":"Keep faith references minimal unless user brings it up."} ${sessionCount>=10?"User has done multiple sessions — be slightly more ownership-forward and direct.":"New user — be stabilizing first."} ${seasonalContext ? `SEASONAL CONTEXT: ${seasonalContext} Let this subtly shape the themes and questions you offer — don't announce it, just let it inform the texture of the conversation.` : ""} ${onboardCtx ? `IMPORTANT CONTEXT ABOUT THIS PERSON: ${onboardCtx} Use this context to make your responses more personal and relevant — reference their specific struggles and goals naturally, but never make it feel like you're reading from a file. Let it inform how you speak, not what you quote back.` : ""}${memoryCtx}${minorSafety} Guide: Collect → Clarify → Check distorted thinking → Responsibility → One small move. When closing: say SESSION_COMPLETE then insight line, takeaway line, action line on separate lines. If crisis: say CRISIS_DETECTED only. No bullet points. Max 3 sentences unless they need space. End with a question unless closing.`;
 
   const startSession=async()=>{
+    if (reflectStartLock.current) return;
+    if (tryConsumeReflectSlot && !tryConsumeReflectSlot()) {
+      setDailyLimitHit(true);
+      return;
+    }
+    reflectStartLock.current = true;
+    setDailyLimitHit(false);
+    setSessionSecondsLeft(REFLECT_SESSION_SEC);
+    setSessionTimeUp(false);
     setPhase("session"); setLoading(true);
     const userMsg=cat?`User selected "${catData?.label}".${freeText?` They wrote: "${freeText}"`:""}`:
       `User wrote freely: "${freeText}"`;
@@ -6843,11 +6933,15 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     } catch {
       const m={role:"assistant",content:catData?.openQ||"What's on your mind right now?",time:now(),id:Date.now()};
       setMsgs([m]);
-    } finally { setLoading(false); setTimeout(()=>inputRef.current?.focus(),200); }
+    } finally {
+      reflectStartLock.current = false;
+      setLoading(false);
+      setTimeout(()=>inputRef.current?.focus(),200);
+    }
   };
 
   const send=async()=>{
-    const t=input.trim(); if(!t||loading)return;
+    const t=input.trim(); if(!t||loading||sessionTimeUp)return;
     setInput("");
     if(isCrisis(t)){setCrisis(true);return;}
     const userMsg={role:"user",content:t,time:now(),id:Date.now()};
@@ -6890,7 +6984,13 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     } finally { setLoading(false); setTimeout(()=>inputRef.current?.focus(),100); }
   };
 
-  const reset=()=>{setPhase("entry");setCat(null);setFreeText("");setMsgs([]);histRef.current=[];setDepth(0);};
+  const reset=()=>{
+    setPhase("entry");setCat(null);setFreeText("");setMsgs([]);histRef.current=[];setDepth(0);
+    setDailyLimitHit(false);
+    setSessionSecondsLeft(REFLECT_SESSION_SEC);
+    setSessionTimeUp(false);
+    if (sessionTimerRef.current) { clearInterval(sessionTimerRef.current); sessionTimerRef.current = null; }
+  };
 
   if(phase==="complete") return (
     <div style={{ minHeight:"100vh",background:C.bgPrimary,fontFamily:font,
@@ -6963,8 +7063,13 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
             margin:0,fontStyle:"italic" }}>
             {loading?"Thinking...":"Selah is with you"}
           </p>
+          <p style={{ color:C.textMuted,fontSize:"9px",margin:"4px 0 0",letterSpacing:"1px" }}>
+            {sessionTimeUp
+              ? "This segment ended — choose below"
+              : `${formatSessionCountdown(sessionSecondsLeft)} left this segment`}
+          </p>
         </div>
-        {depth>=2&&<button onClick={()=>{
+        {depth>=2&&!sessionTimeUp&&<button onClick={()=>{
           const sum={insight:"You took time to reflect — that takes courage.",
             takeaway:"You showed up. That's the first step.",
             action:"Take one slow breath before the day continues."};
@@ -7066,15 +7171,18 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
           background:C.bgSecondary,borderRadius:"20px",padding:"10px 14px",
           border:`1.5px solid ${input?C.accent+"55":"transparent"}`,transition:"border-color 0.2s ease" }}>
           <textarea ref={inputRef} value={input}
+            readOnly={sessionTimeUp}
             onChange={e=>{setInput(e.target.value);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,100)+"px";}}
             onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
-            placeholder="Say what's on your mind..." rows={1}
+            placeholder={sessionTimeUp ? "Choose Continue or Home below…" : "Say what's on your mind..."} rows={1}
             style={{ flex:1,background:"none",border:"none",outline:"none",
               color:C.textPrimary,fontSize:"14px",fontStyle:"italic",
               fontFamily:font,lineHeight:"1.6",resize:"none",
+              opacity:sessionTimeUp?0.45:1,
               padding:0,maxHeight:"100px",overflowY:"auto" }}/>
           {voiceSupported && (
             <button onClick={listening ? stopListening : startListening}
+              disabled={sessionTimeUp}
               style={{ width:"34px",height:"34px",borderRadius:"50%",
                 background: listening ? `${C.terra}22` : C.bgCard,
                 border:`1.5px solid ${listening ? C.terra : C.border}`,
@@ -7092,13 +7200,13 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
               </svg>
             </button>
           )}
-          <button onClick={send} disabled={!input.trim()||loading} style={{
+          <button onClick={send} disabled={!input.trim()||loading||sessionTimeUp} style={{
             width:"34px",height:"34px",borderRadius:"50%",
-            background:input.trim()&&!loading?catData?.color||C.accent:C.bgCard,
-            border:"none",cursor:input.trim()&&!loading?"pointer":"default",
+            background:input.trim()&&!loading&&!sessionTimeUp?catData?.color||C.accent:C.bgCard,
+            border:"none",cursor:input.trim()&&!loading&&!sessionTimeUp?"pointer":"default",
             display:"flex",alignItems:"center",justifyContent:"center",
             flexShrink:0,transition:"all 0.2s ease" }}>
-            <span style={{ color:input.trim()&&!loading?"#fff":C.textMuted,fontSize:"13px",marginLeft:"2px" }}>→</span>
+            <span style={{ color:input.trim()&&!loading&&!sessionTimeUp?"#fff":C.textMuted,fontSize:"13px",marginLeft:"2px" }}>→</span>
           </button>
         </div>
         <p style={{ color:C.textMuted,fontSize:"9px",letterSpacing:"1.5px",
@@ -7106,6 +7214,38 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
           Private · Encrypted · Not therapy or medical advice · Crisis? Call 988 or 911
         </p>
       </div>
+      {sessionTimeUp && (
+        <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",
+          display:"flex",alignItems:"center",justifyContent:"center",zIndex:450,
+          padding:"24px",fontFamily:font }}>
+          <div style={{ background:C.bgPrimary,borderRadius:"16px",padding:"28px 24px",
+            maxWidth:"360px",width:"100%",border:`1px solid ${C.border}`,
+            boxShadow:`0 12px 40px rgba(0,0,0,0.2)` }}>
+            <p style={{ color:C.accent,fontSize:"10px",letterSpacing:"3px",
+              textTransform:"uppercase",fontStyle:"italic",margin:"0 0 10px" }}>Session segment</p>
+            <h2 style={{ color:C.textPrimary,fontSize:"18px",fontWeight:"normal",
+              margin:"0 0 12px",lineHeight:"1.4" }}>Your 15 minutes are up</h2>
+            <p style={{ color:C.textSoft,fontSize:"13px",fontStyle:"italic",
+              lineHeight:"1.8",margin:"0 0 24px" }}>
+              Would you like to keep reflecting with a fresh segment, or return home for now?
+            </p>
+            <div style={{ display:"flex",flexDirection:"column",gap:"10px" }}>
+              <button type="button" onClick={()=>{ setSessionTimeUp(false); setSessionSecondsLeft(REFLECT_SESSION_SEC); }}
+                style={{ width:"100%",background:C.accent,border:"none",borderRadius:"3px",
+                  color:"#fff",fontSize:"10px",letterSpacing:"3px",textTransform:"uppercase",
+                  padding:"14px",cursor:"pointer",fontFamily:font,fontStyle:"italic" }}>
+                Continue reflecting
+              </button>
+              <button type="button" onClick={()=>setScreen("home")}
+                style={{ width:"100%",background:C.bgSecondary,border:`1px solid ${C.border}`,
+                  borderRadius:"3px",color:C.textSoft,fontSize:"10px",letterSpacing:"3px",
+                  textTransform:"uppercase",padding:"14px",cursor:"pointer",fontFamily:font,fontStyle:"italic" }}>
+                Return home
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {crisis&&<CrisisPanel onClose={()=>setCrisis(false)} C={C} font={font}/>}
       <style>{`@keyframes typeDot{0%,60%,100%{transform:translateY(0);opacity:0.4}30%{transform:translateY(-5px);opacity:1}}`}</style>
     </div>
@@ -7130,6 +7270,17 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
           lineHeight:"1.8",margin:"0 0 24px" }}>
           Choose a focus or write freely. Selah helps you collect and move clearly.
         </p>
+        {reflectSlotsInfo && reflectSlotsInfo.limit > 0 && reflectSlotsInfo.limit !== Infinity && (
+          <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",
+            textAlign:"center",margin:"-12px 0 20px" }}>
+            {reflectSlotsInfo.used} of {reflectSlotsInfo.limit} reflection{reflectSlotsInfo.limit === 1 ? "" : "s"} started today
+          </p>
+        )}
+        {dailyLimitHit && (
+          <DailyReflectLimitNudge C={C} font={font} onUpgrade={onUpgrade}
+            used={reflectSlotsInfo?.used ?? 0} limit={reflectSlotsInfo?.limit ?? 0}
+            isTrial={!!isTrialForLimit}/>
+        )}
         <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"10px",marginBottom:"20px" }}>
           {allCats.map((c,i)=>{
             const sel=cat===c.id;
@@ -7191,7 +7342,7 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
           Begin Reflection
         </button>
         <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",
-          textAlign:"center",margin:"10px 0 0" }}>5–10 minutes · Private & encrypted</p>
+          textAlign:"center",margin:"10px 0 0" }}>Up to 15 minutes per segment · Private & encrypted</p>
       </div>
     </div>
   );
@@ -13020,6 +13171,7 @@ useEffect(() => {
   const [totalActiveDays, setTotalActiveDays] = useState(has("totalActiveDays") ? saved.totalActiveDays : 0);
   const [graceUsedWeek, setGraceUsedWeek] = useState(has("graceUsedWeek") ? saved.graceUsedWeek : null); // {week: string, count: number}
   const [sessionHistory, setSessionHistory] = useState(has("sessionHistory") ? saved.sessionHistory : []);
+  const [reflectDaily, setReflectDaily] = useState(has("reflectDaily") ? saved.reflectDaily : { date: "", count: 0 });
   const [assessmentResults, setAssessmentResults] = useState(has("assessmentResults") ? saved.assessmentResults : {});
   const [userEmail, setUserEmail] = useState(has("userEmail") ? saved.userEmail : null);
   const [autoLoginEmail, setAutoLoginEmail] = useState(null);
@@ -13041,6 +13193,28 @@ useEffect(() => {
   // ── Streak logic ──
   const getDateStr = (d) => new Date(d).toISOString().split("T")[0]; // "YYYY-MM-DD"
   const todayStr = getDateStr(Date.now());
+
+  const reflectLimitVal = adminMode ? Infinity : getDailyReflectLimit(effectiveTier, isTrialActive);
+  const reflectUsedToday = reflectDaily.date === todayStr ? reflectDaily.count : 0;
+  const reflectSlotsInfo = Number.isFinite(reflectLimitVal) && reflectLimitVal > 0
+    ? { used: reflectUsedToday, limit: reflectLimitVal }
+    : null;
+
+  const tryConsumeReflectSlot = () => {
+    if (adminMode) return true;
+    const limit = getDailyReflectLimit(effectiveTier, isTrialActive);
+    if (!Number.isFinite(limit)) return true;
+    if (limit <= 0) return false;
+    const key = todayStr;
+    let allowed = false;
+    setReflectDaily((prev) => {
+      const current = prev.date === key ? prev.count : 0;
+      if (current >= limit) return prev;
+      allowed = true;
+      return { date: key, count: current + 1 };
+    });
+    return allowed;
+  };
 
   // Mark today as active (called on meaningful actions)
   const markActive = () => {
@@ -13137,7 +13311,7 @@ useEffect(() => {
       sharingEnabled, pushEnabled, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
       journalEntries, moodHistory, lastVisit: Date.now(),
       feedbackEntries, lastFeedbackPrompt,
-      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, assessmentResults, userEmail, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
+      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, reflectDaily, assessmentResults, userEmail, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
     });
     // Cloud sync if logged in
     if (authToken) {
@@ -13147,7 +13321,7 @@ useEffect(() => {
         sharingEnabled, pushEnabled, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
         journalEntries, moodHistory, lastVisit: Date.now(),
         feedbackEntries, lastFeedbackPrompt,
-        lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, assessmentResults, userEmail, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
+        lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, reflectDaily, assessmentResults, userEmail, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
       };
       fetch("/api/sync", {
         method: "POST",
@@ -13158,7 +13332,7 @@ useEffect(() => {
   }, [appScreen, themeId, fontId, faithLevel, userName, tier, trialStart, steadyDays,
       sessionCount, sharingEnabled, pushEnabled, isMinorUser, tone, quoteFreq, onboardingAnswers,
       isFirstVisit, journalEntries, moodHistory, feedbackEntries, lastFeedbackPrompt,
-      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, assessmentResults, userEmail, stripeEmail, seasonalMode, letters, gratitudeLog]);
+      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, reflectDaily, assessmentResults, userEmail, stripeEmail, seasonalMode, letters, gratitudeLog]);
 
   // Track returning users
   useEffect(() => {
@@ -13419,6 +13593,10 @@ useEffect(() => {
             isMinorUser={isMinorUser}
             tier={effectiveTier} sessionHistory={sessionHistory}
             seasonalContext={(seasonalMode && currentSeason?.reflectContext) ? currentSeason.reflectContext : null}
+            tryConsumeReflectSlot={tryConsumeReflectSlot}
+            onUpgrade={()=>setShowSub(true)}
+            reflectSlotsInfo={reflectSlotsInfo}
+            isTrialForLimit={isTrialActive && effectiveTier === "free"}
             onSessionComplete={(sessionData)=>{
               setSessionCount(s=>s+1);
               markActive();
@@ -13582,6 +13760,12 @@ useEffect(() => {
                   if(cloud.journalEntries?.length>journalEntries.length) setJournalEntries(cloud.journalEntries);
                   if(cloud.moodHistory?.length>moodHistory.length) setMoodHistory(cloud.moodHistory);
                   if(cloud.sessionHistory?.length>sessionHistory.length) setSessionHistory(cloud.sessionHistory);
+                  if(cloud.reflectDaily?.date === todayStr) {
+                    setReflectDaily((prev) => {
+                      if (prev.date !== todayStr) return cloud.reflectDaily;
+                      return { date: todayStr, count: Math.max(prev.count, cloud.reflectDaily.count || 0) };
+                    });
+                  }
                   if(cloud.steadyDays>steadyDays) setSteadyDays(cloud.steadyDays);
                   if(cloud.bestStreak>bestStreak) setBestStreak(cloud.bestStreak);
                   if(cloud.totalActiveDays>totalActiveDays) setTotalActiveDays(cloud.totalActiveDays);
@@ -13728,6 +13912,12 @@ useEffect(() => {
                 if(cloud.journalEntries?.length>journalEntries.length) setJournalEntries(cloud.journalEntries);
                 if(cloud.moodHistory?.length>moodHistory.length) setMoodHistory(cloud.moodHistory);
                 if(cloud.sessionHistory?.length>sessionHistory.length) setSessionHistory(cloud.sessionHistory);
+                if(cloud.reflectDaily?.date === todayStr) {
+                  setReflectDaily((prev) => {
+                    if (prev.date !== todayStr) return cloud.reflectDaily;
+                    return { date: todayStr, count: Math.max(prev.count, cloud.reflectDaily.count || 0) };
+                  });
+                }
                 if(cloud.steadyDays>steadyDays) setSteadyDays(cloud.steadyDays);
                 if(cloud.onboardingAnswers?.name){
                   setOnboardingAnswers(cloud.onboardingAnswers);
