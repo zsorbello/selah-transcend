@@ -28,8 +28,9 @@ app.use(cors());
 app.use('/api/stripe-webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
-// Serve static frontend from public
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve static assets from public
+app.use('/public', express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
 
 // Mount API routes
 app.all('/api/analytics', analytics);
@@ -47,12 +48,12 @@ app.all('/api/verify-payment', verifyPayment);
 
 // Homepage route
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // SPA fallback for any non-API route
 app.get('{*path}', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.listen(PORT, () => {
