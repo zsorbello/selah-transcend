@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Get Selah — Add to Your Phone</title>
+  <meta name="description" content="Selah is a faith-rooted mental wellness app. Add it to your home screen in seconds."/>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Cinzel:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0D0B09; --bg2: #141210; --border: rgba(200,164,78,0.15);
+      --amber: #C8A44E; --amber-light: #E8C878; --sage: #7A9A7A;
+      --terra: #B06040; --text: #F0EAE0; --text-soft: #C8BEA8; --text-muted: #7A7060;
+    }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      min-height: 100vh; overflow-x: hidden;
+    }
+    body::before {
+      content: ''; position: fixed; top: -200px; left: 50%; transform: translateX(-50%);
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, rgba(200,164,78,0.06) 0%, transparent 70%);
+      pointer-events: none; z-index: 0;
+    }
+    .wrap { max-width: 480px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+    /* HERO */
+    .hero { padding: 48px 0 32px; text-align: center; }
+    .logo-ring {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 60px; height: 60px; border-radius: 50%;
+      border: 1.5px solid rgba(200,164,78,0.3); background: rgba(200,164,78,0.06);
+      margin-bottom: 18px; animation: breathe 4s ease-in-out infinite;
+    }
+    @keyframes breathe {
+      0%,100%{ transform:scale(1); box-shadow:0 0 0 0 rgba(200,164,78,0.0); }
+      50%{ transform:scale(1.04); box-shadow:0 0 30px 8px rgba(200,164,78,0.08); }
+    }
+    .eyebrow { font-family:'Cinzel',serif; font-size:9px; letter-spacing:4px; color:var(--amber); text-transform:uppercase; margin-bottom:12px; }
+    h1 { font-size:clamp(30px,9vw,44px); font-weight:300; line-height:1.15; margin-bottom:12px; }
+    h1 em { font-style:italic; color:var(--amber-light); }
+    .hero-sub { font-size:14px; font-style:italic; color:var(--text-soft); line-height:1.8; margin-bottom:0; }
+
+    /* STEP FLOW */
+    .steps-section { padding: 32px 0 0; }
+    .steps-label { font-family:'Cinzel',serif; font-size:9px; letter-spacing:4px; color:var(--amber); text-transform:uppercase; text-align:center; margin-bottom:24px; }
+
+    /* Step cards */
+    .step-card {
+      background: var(--bg2); border-radius: 12px; margin-bottom: 10px;
+      border: 1.5px solid var(--border); overflow: hidden; transition: border-color 0.3s ease;
+    }
+    .step-card.active { border-color: rgba(200,164,78,0.5); }
+    .step-card.done { border-color: rgba(122,154,122,0.4); }
+
+    .step-header { display:flex; align-items:center; gap:16px; padding:18px 20px; cursor:pointer; }
+    .step-number {
+      width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Cinzel', serif; font-size: 12px;
+      background: rgba(200,164,78,0.1); border: 1.5px solid rgba(200,164,78,0.25); color: var(--amber);
+      transition: all 0.3s ease;
+    }
+    .step-card.done .step-number { background: rgba(122,154,122,0.15); border-color: rgba(122,154,122,0.4); color: var(--sage); font-size:16px; }
+    .step-info { flex: 1; }
+    .step-title { font-family:'Cinzel',serif; font-size:10px; letter-spacing:2px; color:var(--amber); text-transform:uppercase; margin-bottom:3px; }
+    .step-card.done .step-title { color: var(--sage); }
+    .step-desc { font-size:13px; font-style:italic; color:var(--text-soft); line-height:1.5; }
+
+    /* Expandable content */
+    .step-content { max-height:0; overflow:hidden; transition:max-height 0.4s ease; }
+    .step-card.active .step-content { max-height:600px; }
+    .step-inner { padding: 0 20px 20px; }
+
+    /* Device tabs */
+    .device-tabs { display:flex; gap:8px; margin-bottom:16px; }
+    .device-tab {
+      flex:1; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px; text-align: center; cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .device-tab.active { background: rgba(200,164,78,0.1); border-color: rgba(200,164,78,0.4); }
+    .device-tab-icon { font-size: 18px; margin-bottom: 4px; }
+    .device-tab-label { font-family:'Cinzel',serif; font-size:8px; letter-spacing:1.5px; color:var(--amber); text-transform:uppercase; }
+
+    .instructions { display:none; }
+    .instructions.visible { display:block; }
+
+    .inst-step { display:flex; gap:12px; align-items:flex-start; margin-bottom:12px; }
+    .inst-step:last-child { margin-bottom:0; }
+    .inst-num {
+      width:22px; height:22px; border-radius:50%; flex-shrink:0; margin-top:2px;
+      background:rgba(200,164,78,0.1); border:1px solid rgba(200,164,78,0.25);
+      display:flex; align-items:center; justify-content:center;
+      font-family:'Cinzel',serif; font-size:8px; color:var(--amber);
+    }
+    .inst-text { font-size:13px; font-style:italic; color:var(--text-soft); line-height:1.75; }
+    .inst-text strong { font-style:normal; color:var(--text); font-weight:400; }
+
+    /* Done button */
+    .done-btn {
+      width:100%; margin-top:16px; background: rgba(122,154,122,0.12);
+      border: 1.5px solid rgba(122,154,122,0.3); border-radius:4px;
+      color: var(--sage); font-family:'Cinzel',serif; font-size:9px;
+      letter-spacing:3px; text-transform:uppercase; padding:14px;
+      cursor:pointer; transition:all 0.2s ease;
+    }
+    .done-btn:hover { background:rgba(122,154,122,0.2); border-color:var(--sage); }
+
+    /* Open app step */
+    .open-app-btn {
+      display:block; width:100%; background:var(--amber); color:#0D0B09;
+      font-family:'Cinzel',serif; font-size:10px; letter-spacing:3px;
+      text-transform:uppercase; padding:17px; border-radius:4px;
+      text-decoration:none; text-align:center; margin-top:4px;
+      transition:all 0.3s ease; box-shadow:0 4px 24px rgba(200,164,78,0.25);
+    }
+    .open-app-btn:hover { background:var(--amber-light); transform:translateY(-1px); }
+
+    .skip-link { display:block; text-align:center; margin-top:12px; font-size:11px; font-style:italic; color:var(--text-muted); text-decoration:none; }
+    .skip-link:hover { color:var(--text-soft); }
+
+    /* Features */
+    .features { padding: 32px 0 0; }
+    .divider { display:flex; align-items:center; gap:16px; margin-bottom:24px; }
+    .divider::before,.divider::after { content:''; flex:1; height:1px; background:var(--border); }
+    .divider span { color:var(--text-muted); font-size:11px; font-style:italic; white-space:nowrap; }
+    .feat-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:32px; }
+    .feat { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:14px; }
+    .feat-icon { font-size:18px; margin-bottom:6px; }
+    .feat-name { font-family:'Cinzel',serif; font-size:8px; letter-spacing:1.5px; color:var(--amber); text-transform:uppercase; margin-bottom:3px; }
+    .feat-desc { font-size:11px; font-style:italic; color:var(--text-soft); line-height:1.6; }
+
+    /* Footer */
+    .footer { text-align:center; padding:24px 0 56px; border-top:1px solid var(--border); }
+    .footer-note { font-size:11px; font-style:italic; color:var(--text-muted); line-height:1.8; }
+
+    .reveal { opacity:0; transform:translateY(12px); transition:opacity 0.6s ease,transform 0.6s ease; }
+    .reveal.visible { opacity:1; transform:translateY(0); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HERO -->
+  <div class="hero reveal">
+    <div class="logo-ring">
+      <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+        <path d="M16 4 C10 4 6 9 6 14 C6 20 10 24 16 28 C22 24 26 20 26 14 C26 9 22 4 16 4Z" stroke="#C8A44E" stroke-width="1.2" fill="none" stroke-linejoin="round"/>
+        <path d="M16 10 C13 10 11 12 11 14.5 C11 18 13.5 20.5 16 23 C18.5 20.5 21 18 21 14.5 C21 12 19 10 16 10Z" fill="rgba(200,164,78,0.2)" stroke="#C8A44E" stroke-width="0.8"/>
+      </svg>
+    </div>
+    <p class="eyebrow">Selah · Mental Wellness</p>
+    <h1>Still your mind.<br/><em>Strengthen</em> your soul.</h1>
+    <p class="hero-sub">Follow the steps below to get Selah on your phone.</p>
+  </div>
+
+  <!-- STEP FLOW -->
+  <div class="steps-section reveal">
+    <p class="steps-label">Get started in 2 steps</p>
+
+    <!-- Step 1: Add to Home Screen -->
+    <div class="step-card active" id="step1">
+      <div class="step-header" onclick="toggleStep('step1')">
+        <div class="step-number" id="step1-num">1</div>
+        <div class="step-info">
+          <p class="step-title">Add to Home Screen</p>
+          <p class="step-desc">Install Selah like a real app — no App Store needed</p>
+        </div>
+      </div>
+      <div class="step-content">
+        <div class="step-inner">
+          <!-- Device tabs -->
+          <div class="device-tabs">
+            <div class="device-tab" id="tab-ios" onclick="showDevice('ios')">
+              <div class="device-tab-icon">🍎</div>
+              <div class="device-tab-label">iPhone</div>
+            </div>
+            <div class="device-tab" id="tab-android" onclick="showDevice('android')">
+              <div class="device-tab-icon">🤖</div>
+              <div class="device-tab-label">Android</div>
+            </div>
+          </div>
+
+          <!-- iOS instructions -->
+          <div class="instructions" id="inst-ios">
+            <div class="inst-step"><div class="inst-num">1</div><p class="inst-text">Make sure you're in <strong>Safari</strong> — this won't work in Chrome or other browsers on iPhone.</p></div>
+            <div class="inst-step"><div class="inst-num">2</div><p class="inst-text">Tap the <strong>Share button</strong> — the square with an arrow pointing up, at the bottom of Safari.</p></div>
+            <div class="inst-step"><div class="inst-num">3</div><p class="inst-text">Scroll down and tap <strong>"Add to Home Screen."</strong></p></div>
+            <div class="inst-step"><div class="inst-num">4</div><p class="inst-text">Tap <strong>Add</strong> in the top right. Selah now lives on your home screen.</p></div>
+          </div>
+
+          <!-- Android instructions -->
+          <div class="instructions" id="inst-android">
+            <div class="inst-step"><div class="inst-num">1</div><p class="inst-text">Open this page in <strong>Chrome</strong> if you're not already.</p></div>
+            <div class="inst-step"><div class="inst-num">2</div><p class="inst-text">Tap the <strong>three dot menu ⋮</strong> in the top right corner of Chrome.</p></div>
+            <div class="inst-step"><div class="inst-num">3</div><p class="inst-text">Tap <strong>"Add to Home Screen"</strong> or <strong>"Install App."</strong></p></div>
+            <div class="inst-step"><div class="inst-num">4</div><p class="inst-text">Tap <strong>Install.</strong> Selah appears on your home screen instantly.</p></div>
+          </div>
+
+          <button class="done-btn" onclick="markDone()">✓ I added it to my home screen</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Open Selah -->
+    <div class="step-card" id="step2">
+      <div class="step-header">
+        <div class="step-number" id="step2-num">2</div>
+        <div class="step-info">
+          <p class="step-title">Open Selah</p>
+          <p class="step-desc">Start your free 7-day trial — takes 2 minutes to set up</p>
+        </div>
+      </div>
+      <div class="step-content" id="step2-content">
+        <div class="step-inner">
+          <p style="font-size:13px;font-style:italic;color:var(--text-soft);line-height:1.8;margin-bottom:16px;">
+            Open Selah from your home screen, or tap below. You'll answer a few quick questions so Selah can personalize your experience — then you're in.
+          </p>
+          <a href="https://selah-transcend.com?new=true" class="open-app-btn">Open Selah &rarr;</a>
+          <a href="https://selah-transcend.com" class="skip-link">Skip — open without installing</a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- FEATURES -->
+  <div class="features reveal">
+    <div class="divider"><span>What's inside</span></div>
+    <div class="feat-grid">
+      <div class="feat"><div class="feat-icon">◈</div><p class="feat-name">Reflect</p><p class="feat-desc">AI-guided sessions that help you think clearly</p></div>
+      <div class="feat"><div class="feat-icon">📜</div><p class="feat-name">Biblical Stories</p><p class="feat-desc">Real Scripture, retold raw and honest</p></div>
+      <div class="feat"><div class="feat-icon">⚔️</div><p class="feat-name">Armor Up</p><p class="feat-desc">5-minute morning routine to start strong</p></div>
+      <div class="feat"><div class="feat-icon">🕯️</div><p class="feat-name">Prayer Wall</p><p class="feat-desc">Anonymous. No names. Just prayer.</p></div>
+      <div class="feat"><div class="feat-icon">✉️</div><p class="feat-name">Letters to God</p><p class="feat-desc">Private prayer journal. Just you and God.</p></div>
+      <div class="feat"><div class="feat-icon">🌑</div><p class="feat-name">Heavy Day</p><p class="feat-desc">For the days where nothing feels okay</p></div>
+    </div>
+  </div>
+
+  <div class="footer reveal">
+    <p class="footer-note">Free to start · No app store · 7-day free trial<br/>Not therapy. Not medical advice. Call 988 or 911 in a crisis.</p>
+  </div>
+
+</div>
+
+<script>
+  // Auto-detect device and show right instructions
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const isAndroid = /Android/.test(navigator.userAgent);
+
+  function showDevice(device) {
+    document.getElementById('inst-ios').classList.remove('visible');
+    document.getElementById('inst-android').classList.remove('visible');
+    document.getElementById('tab-ios').classList.remove('active');
+    document.getElementById('tab-android').classList.remove('active');
+    document.getElementById('inst-' + device).classList.add('visible');
+    document.getElementById('tab-' + device).classList.add('active');
+  }
+
+  // Auto-select on load
+  window.addEventListener('load', () => {
+    if (isIOS) showDevice('ios');
+    else showDevice('android'); // default to android (most common)
+  });
+
+  function toggleStep(id) {
+    const card = document.getElementById(id);
+    card.classList.toggle('active');
+  }
+
+  function markDone() {
+    // Mark step 1 done
+    const step1 = document.getElementById('step1');
+    step1.classList.remove('active');
+    step1.classList.add('done');
+    document.getElementById('step1-num').textContent = '✓';
+
+    // Open step 2
+    const step2 = document.getElementById('step2');
+    step2.classList.add('active');
+    step2.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  // Scroll reveal
+  const reveals = document.querySelectorAll('.reveal');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((e, i) => {
+      if (e.isIntersecting) {
+        setTimeout(() => e.target.classList.add('visible'), i * 100);
+        observer.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  reveals.forEach(r => observer.observe(r));
+</script>
+</body>
+</html>

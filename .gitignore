@@ -1,0 +1,7 @@
+.vercel
+node_modules
+dist
+App_v*.jsx
+Selah-Master-Backup/
+Selah-Master-Backup2/
+selah-transcend/
