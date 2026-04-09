@@ -238,57 +238,11 @@ function Label({ text, color, font }) {
 
 // Tier access helper: returns true if user has access to a given tier level
 const TIER_LEVELS = { free:0, foundation:1, growth:2, deep:3 };
+// Trial users get foundation-level access only (not growth/deep)
 function hasAccess(userTier, requiredTier, isTrialActive) {
-    if (new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04") return true;
-  if (isTrialActive) return true; // trial unlocks everything
+  if (new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04") return true;
+  if (isTrialActive && (TIER_LEVELS[requiredTier]||0) <= TIER_LEVELS.foundation) return true;
   return (TIER_LEVELS[userTier]||0) >= (TIER_LEVELS[requiredTier]||0);
-}
-
-// Guided reflection: segment length and daily starts per tier (trial = active free trial)
-const REFLECT_SESSION_SEC = 15 * 60;
-function getDailyReflectLimit(tier, isTrialActive) {
-  if (isTrialActive) return 2;
-  const map = { free: 0, foundation: 3, growth: 5, deep: Infinity };
-  return map[tier] ?? 0;
-}
-
-function formatSessionCountdown(totalSec) {
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-// Shown when user has used all reflection starts for today
-function DailyReflectLimitNudge({ C, font, onUpgrade, used, limit, isTrial }) {
-  return (
-    <div style={{ background:`${C.amber}08`, border:`1.5px solid ${C.amber}33`,
-      borderRadius:"12px", padding:"24px 20px", textAlign:"center", margin:"20px 0" }}>
-      <div style={{ fontSize:"32px", marginBottom:"12px" }}>🌿</div>
-      <h3 style={{ color:C.textPrimary, fontSize:"16px", fontWeight:"normal",
-        fontFamily:font, margin:"0 0 8px" }}>
-        You have used today&apos;s reflections
-      </h3>
-      <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
-        lineHeight:"1.8", margin:"0 0 16px" }}>
-        {isTrial
-          ? `Your trial includes ${limit} guided reflections per day. Come back tomorrow, or upgrade for more.`
-          : limit <= 3
-            ? `The Foundation plan includes ${limit} reflections per day. Upgrade to Growth or Deep for more daily time with Selah.`
-            : `Your plan includes ${limit} reflections per day. Upgrade to Deep for unlimited daily reflections.`}
-      </p>
-      <p style={{ color:C.textMuted, fontSize:"11px", margin:"0 0 16px" }}>
-        {used} of {limit} used today
-      </p>
-      <button onClick={onUpgrade} style={{
-        background:C.accent, border:"none", borderRadius:"3px",
-        color:"#fff", fontSize:"10px", letterSpacing:"3px",
-        textTransform:"uppercase", padding:"14px 32px", cursor:"pointer",
-        fontFamily:font, fontStyle:"italic",
-        boxShadow:`0 2px 12px ${C.accent}33` }}>
-        View Plans
-      </button>
-    </div>
-  );
 }
 
 // Upgrade prompt shown when user hits a paywall
@@ -6320,20 +6274,20 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
         </button>
         <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"24px" }}>
           {[
-            {icon:"◈",label:"Reflect",sub:((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?"🔒 Foundation+":"Begin a session",bg:`${C.sage}15`,color:C.sage,border:`${C.sage}22`,screen:"reflect"},
+            {icon:"◈",label:"Reflect",sub:"Begin a session",bg:`${C.sage}15`,color:C.sage,border:`${C.sage}22`,screen:"reflect"},
             {icon:"✍️",label:"Notebook",sub:"Write freely",bg:`${C.terra}12`,color:C.terra,border:`${C.terra}20`,screen:"journal"},
-            {icon:"📜",label:"Biblical Reflections",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"Real stories, told straight",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}15`,screen:"stories"},
-            {icon:"⚔️",label:"Armor Up",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"5-min morning sequence",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}18`,screen:"armorup"},
+            {icon:"📜",label:"Biblical Reflections",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive?"🔒 Foundation+":"Real stories, told straight",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}15`,screen:"stories"},
             {icon:"🌑",label:"Heavy Day",sub:"Lament. Be honest.",bg:`${C.terra}08`,color:C.terra,border:`${C.terra}18`,screen:"heavyday"},
-            {icon:"🪑",label:"The Bench",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"Your saved insights",bg:`${C.sage}08`,color:C.sage,border:`${C.sage}18`,screen:"bench"},
             {icon:"🙏",label:"Gratitude",sub:"Count your blessings",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}18`,screen:"gratitude"},
-            {icon:"🌙",label:"Wind Down",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"Sleep routine",bg:`${C.accent}08`,color:C.accent,border:`${C.accent}18`,screen:"winddown"},
             {icon:"✉️",label:"Letters to God",sub:"Just you and God",bg:`${C.sage}10`,color:C.sage,border:`${C.sage}20`,screen:"letters"},
             {icon:"🫁",label:"Breathe",sub:"Guided breathing",bg:`${C.sageLight}12`,color:C.sageDark,border:`${C.sage}18`,screen:"breathe"},
-            {icon:"⚡",label:"Quick Check-in",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"2 minutes",bg:`${C.amber}12`,color:C.amber,border:`${C.amber}20`,screen:"checkin"},
-            {icon:"📖",label:"Resources",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"Books & wisdom",bg:`${C.amber}12`,color:C.amber,border:`${C.amber}20`,screen:"resources"},
-            {icon:"📊",label:"Progress",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"Your growth",bg:`${C.sageLight}25`,color:C.sageDark,border:`${C.sage}22`,screen:"progress"},
-            {icon:"🧩",label:"Assessments",sub:tier==="free"?"🔒 Foundation+":"Know yourself",bg:`${C.accent}12`,color:C.accent,border:`${C.accent}20`,screen:"assessments"},
+            {icon:"🪑",label:"The Bench",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive?"🔒 Foundation+":"Your saved insights",bg:`${C.sage}08`,color:C.sage,border:`${C.sage}18`,screen:"bench"},
+            {icon:"⚡",label:"Quick Check-in",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive?"🔒 Foundation+":"2 minutes",bg:`${C.amber}12`,color:C.amber,border:`${C.amber}20`,screen:"checkin"},
+            {icon:"⚔️",label:"Armor Up",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"5-min morning sequence",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}18`,screen:"armorup"},
+            {icon:"🌙",label:"Wind Down",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"Sleep routine",bg:`${C.accent}08`,color:C.accent,border:`${C.accent}18`,screen:"winddown"},
+            {icon:"📖",label:"Resources",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"Books & wisdom",bg:`${C.amber}12`,color:C.amber,border:`${C.amber}20`,screen:"resources"},
+            {icon:"📊",label:"Progress",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"Your growth",bg:`${C.sageLight}25`,color:C.sageDark,border:`${C.sage}22`,screen:"progress"},
+            {icon:"🧩",label:"Assessments",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.deep?"🔒 Deep+":"Know yourself",bg:`${C.accent}12`,color:C.accent,border:`${C.accent}20`,screen:"assessments"},
           ].map(item=>(
             <button key={item.label} onClick={()=>{
               if(item.screen==="_crisis"){ setShowCrisisPanel(true); return; }
@@ -6734,7 +6688,7 @@ function HeavyDayScreen({ C, font, onClose, faithLevel, userName }) {
   return null;
 }
 
-function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onSessionComplete, onboardingAnswers, userName, isMinorUser, tier, sessionHistory, seasonalContext, setBenchItems, tryConsumeReflectSlot, onUpgrade, reflectSlotsInfo, isTrialForLimit }) {
+function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onSessionComplete, onboardingAnswers, userName, isMinorUser, tier, sessionHistory, seasonalContext, setBenchItems }) {
   const [phase,setPhase]=useState("entry");
   const [cat,setCat]=useState(null);
   const [freeText,setFreeText]=useState("");
@@ -6744,11 +6698,6 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
   const [crisis,setCrisis]=useState(false);
   const [depth,setDepth]=useState(0);
   const [summary,setSummary]=useState({});
-  const [dailyLimitHit,setDailyLimitHit]=useState(false);
-  const [sessionSecondsLeft,setSessionSecondsLeft]=useState(REFLECT_SESSION_SEC);
-  const [sessionTimeUp,setSessionTimeUp]=useState(false);
-  const sessionTimerRef=useRef(null);
-  const reflectStartLock=useRef(false);
   const histRef=useRef([]);
   const bottomRef=useRef(null);
   const inputRef=useRef(null);
@@ -6816,35 +6765,6 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
 
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[msgs,loading]);
 
-  useEffect(() => {
-    if (phase !== "session" || sessionTimeUp) {
-      if (sessionTimerRef.current) {
-        clearInterval(sessionTimerRef.current);
-        sessionTimerRef.current = null;
-      }
-      return;
-    }
-    sessionTimerRef.current = setInterval(() => {
-      setSessionSecondsLeft((sec) => {
-        if (sec <= 1) {
-          if (sessionTimerRef.current) {
-            clearInterval(sessionTimerRef.current);
-            sessionTimerRef.current = null;
-          }
-          setSessionTimeUp(true);
-          return 0;
-        }
-        return sec - 1;
-      });
-    }, 1000);
-    return () => {
-      if (sessionTimerRef.current) {
-        clearInterval(sessionTimerRef.current);
-        sessionTimerRef.current = null;
-      }
-    };
-  }, [phase, sessionTimeUp]);
-
   const onboardCtx = onboardingAnswers ? [
     onboardingAnswers.name && `Their name is ${onboardingAnswers.name}.`,
     onboardingAnswers.reasons && `They came to Selah for: ${Array.isArray(onboardingAnswers.reasons)?onboardingAnswers.reasons.join(", "):onboardingAnswers.reasons}.`,
@@ -6907,15 +6827,6 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
   const sysPrompt=`You are Selah — a faith-rooted clarity companion. Help people collect thoughts, reflect clearly, and move steadily. CRITICAL: You are NOT a therapist, counselor, or medical provider. Never diagnose, prescribe, or provide medical/clinical advice. If someone describes symptoms, encourage them to see a licensed professional. Never claim to replace professional care. ${toneInstruction} ${faithLevel>=2?"Reference scripture naturally when it adds clarity.":"Keep faith references minimal unless user brings it up."} ${sessionCount>=10?"User has done multiple sessions — be slightly more ownership-forward and direct.":"New user — be stabilizing first."} ${seasonalContext ? `SEASONAL CONTEXT: ${seasonalContext} Let this subtly shape the themes and questions you offer — don't announce it, just let it inform the texture of the conversation.` : ""} ${onboardCtx ? `IMPORTANT CONTEXT ABOUT THIS PERSON: ${onboardCtx} Use this context to make your responses more personal and relevant — reference their specific struggles and goals naturally, but never make it feel like you're reading from a file. Let it inform how you speak, not what you quote back.` : ""}${memoryCtx}${minorSafety} Guide: Collect → Clarify → Check distorted thinking → Responsibility → One small move. When closing: say SESSION_COMPLETE then insight line, takeaway line, action line on separate lines. If crisis: say CRISIS_DETECTED only. No bullet points. Max 3 sentences unless they need space. End with a question unless closing.`;
 
   const startSession=async()=>{
-    if (reflectStartLock.current) return;
-    if (tryConsumeReflectSlot && !tryConsumeReflectSlot()) {
-      setDailyLimitHit(true);
-      return;
-    }
-    reflectStartLock.current = true;
-    setDailyLimitHit(false);
-    setSessionSecondsLeft(REFLECT_SESSION_SEC);
-    setSessionTimeUp(false);
     setPhase("session"); setLoading(true);
     const userMsg=cat?`User selected "${catData?.label}".${freeText?` They wrote: "${freeText}"`:""}`:
       `User wrote freely: "${freeText}"`;
@@ -6933,15 +6844,11 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     } catch {
       const m={role:"assistant",content:catData?.openQ||"What's on your mind right now?",time:now(),id:Date.now()};
       setMsgs([m]);
-    } finally {
-      reflectStartLock.current = false;
-      setLoading(false);
-      setTimeout(()=>inputRef.current?.focus(),200);
-    }
+    } finally { setLoading(false); setTimeout(()=>inputRef.current?.focus(),200); }
   };
 
   const send=async()=>{
-    const t=input.trim(); if(!t||loading||sessionTimeUp)return;
+    const t=input.trim(); if(!t||loading)return;
     setInput("");
     if(isCrisis(t)){setCrisis(true);return;}
     const userMsg={role:"user",content:t,time:now(),id:Date.now()};
@@ -6984,13 +6891,7 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     } finally { setLoading(false); setTimeout(()=>inputRef.current?.focus(),100); }
   };
 
-  const reset=()=>{
-    setPhase("entry");setCat(null);setFreeText("");setMsgs([]);histRef.current=[];setDepth(0);
-    setDailyLimitHit(false);
-    setSessionSecondsLeft(REFLECT_SESSION_SEC);
-    setSessionTimeUp(false);
-    if (sessionTimerRef.current) { clearInterval(sessionTimerRef.current); sessionTimerRef.current = null; }
-  };
+  const reset=()=>{setPhase("entry");setCat(null);setFreeText("");setMsgs([]);histRef.current=[];setDepth(0);};
 
   if(phase==="complete") return (
     <div style={{ minHeight:"100vh",background:C.bgPrimary,fontFamily:font,
@@ -7063,13 +6964,8 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
             margin:0,fontStyle:"italic" }}>
             {loading?"Thinking...":"Selah is with you"}
           </p>
-          <p style={{ color:C.textMuted,fontSize:"9px",margin:"4px 0 0",letterSpacing:"1px" }}>
-            {sessionTimeUp
-              ? "This segment ended — choose below"
-              : `${formatSessionCountdown(sessionSecondsLeft)} left this segment`}
-          </p>
         </div>
-        {depth>=2&&!sessionTimeUp&&<button onClick={()=>{
+        {depth>=2&&<button onClick={()=>{
           const sum={insight:"You took time to reflect — that takes courage.",
             takeaway:"You showed up. That's the first step.",
             action:"Take one slow breath before the day continues."};
@@ -7171,18 +7067,15 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
           background:C.bgSecondary,borderRadius:"20px",padding:"10px 14px",
           border:`1.5px solid ${input?C.accent+"55":"transparent"}`,transition:"border-color 0.2s ease" }}>
           <textarea ref={inputRef} value={input}
-            readOnly={sessionTimeUp}
             onChange={e=>{setInput(e.target.value);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,100)+"px";}}
             onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
-            placeholder={sessionTimeUp ? "Choose Continue or Home below…" : "Say what's on your mind..."} rows={1}
+            placeholder="Say what's on your mind..." rows={1}
             style={{ flex:1,background:"none",border:"none",outline:"none",
               color:C.textPrimary,fontSize:"14px",fontStyle:"italic",
               fontFamily:font,lineHeight:"1.6",resize:"none",
-              opacity:sessionTimeUp?0.45:1,
               padding:0,maxHeight:"100px",overflowY:"auto" }}/>
           {voiceSupported && (
             <button onClick={listening ? stopListening : startListening}
-              disabled={sessionTimeUp}
               style={{ width:"34px",height:"34px",borderRadius:"50%",
                 background: listening ? `${C.terra}22` : C.bgCard,
                 border:`1.5px solid ${listening ? C.terra : C.border}`,
@@ -7200,13 +7093,13 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
               </svg>
             </button>
           )}
-          <button onClick={send} disabled={!input.trim()||loading||sessionTimeUp} style={{
+          <button onClick={send} disabled={!input.trim()||loading} style={{
             width:"34px",height:"34px",borderRadius:"50%",
-            background:input.trim()&&!loading&&!sessionTimeUp?catData?.color||C.accent:C.bgCard,
-            border:"none",cursor:input.trim()&&!loading&&!sessionTimeUp?"pointer":"default",
+            background:input.trim()&&!loading?catData?.color||C.accent:C.bgCard,
+            border:"none",cursor:input.trim()&&!loading?"pointer":"default",
             display:"flex",alignItems:"center",justifyContent:"center",
             flexShrink:0,transition:"all 0.2s ease" }}>
-            <span style={{ color:input.trim()&&!loading&&!sessionTimeUp?"#fff":C.textMuted,fontSize:"13px",marginLeft:"2px" }}>→</span>
+            <span style={{ color:input.trim()&&!loading?"#fff":C.textMuted,fontSize:"13px",marginLeft:"2px" }}>→</span>
           </button>
         </div>
         <p style={{ color:C.textMuted,fontSize:"9px",letterSpacing:"1.5px",
@@ -7214,38 +7107,6 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
           Private · Encrypted · Not therapy or medical advice · Crisis? Call 988 or 911
         </p>
       </div>
-      {sessionTimeUp && (
-        <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",
-          display:"flex",alignItems:"center",justifyContent:"center",zIndex:450,
-          padding:"24px",fontFamily:font }}>
-          <div style={{ background:C.bgPrimary,borderRadius:"16px",padding:"28px 24px",
-            maxWidth:"360px",width:"100%",border:`1px solid ${C.border}`,
-            boxShadow:`0 12px 40px rgba(0,0,0,0.2)` }}>
-            <p style={{ color:C.accent,fontSize:"10px",letterSpacing:"3px",
-              textTransform:"uppercase",fontStyle:"italic",margin:"0 0 10px" }}>Session segment</p>
-            <h2 style={{ color:C.textPrimary,fontSize:"18px",fontWeight:"normal",
-              margin:"0 0 12px",lineHeight:"1.4" }}>Your 15 minutes are up</h2>
-            <p style={{ color:C.textSoft,fontSize:"13px",fontStyle:"italic",
-              lineHeight:"1.8",margin:"0 0 24px" }}>
-              Would you like to keep reflecting with a fresh segment, or return home for now?
-            </p>
-            <div style={{ display:"flex",flexDirection:"column",gap:"10px" }}>
-              <button type="button" onClick={()=>{ setSessionTimeUp(false); setSessionSecondsLeft(REFLECT_SESSION_SEC); }}
-                style={{ width:"100%",background:C.accent,border:"none",borderRadius:"3px",
-                  color:"#fff",fontSize:"10px",letterSpacing:"3px",textTransform:"uppercase",
-                  padding:"14px",cursor:"pointer",fontFamily:font,fontStyle:"italic" }}>
-                Continue reflecting
-              </button>
-              <button type="button" onClick={()=>setScreen("home")}
-                style={{ width:"100%",background:C.bgSecondary,border:`1px solid ${C.border}`,
-                  borderRadius:"3px",color:C.textSoft,fontSize:"10px",letterSpacing:"3px",
-                  textTransform:"uppercase",padding:"14px",cursor:"pointer",fontFamily:font,fontStyle:"italic" }}>
-                Return home
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {crisis&&<CrisisPanel onClose={()=>setCrisis(false)} C={C} font={font}/>}
       <style>{`@keyframes typeDot{0%,60%,100%{transform:translateY(0);opacity:0.4}30%{transform:translateY(-5px);opacity:1}}`}</style>
     </div>
@@ -7270,17 +7131,6 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
           lineHeight:"1.8",margin:"0 0 24px" }}>
           Choose a focus or write freely. Selah helps you collect and move clearly.
         </p>
-        {reflectSlotsInfo && reflectSlotsInfo.limit > 0 && reflectSlotsInfo.limit !== Infinity && (
-          <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",
-            textAlign:"center",margin:"-12px 0 20px" }}>
-            {reflectSlotsInfo.used} of {reflectSlotsInfo.limit} reflection{reflectSlotsInfo.limit === 1 ? "" : "s"} started today
-          </p>
-        )}
-        {dailyLimitHit && (
-          <DailyReflectLimitNudge C={C} font={font} onUpgrade={onUpgrade}
-            used={reflectSlotsInfo?.used ?? 0} limit={reflectSlotsInfo?.limit ?? 0}
-            isTrial={!!isTrialForLimit}/>
-        )}
         <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"10px",marginBottom:"20px" }}>
           {allCats.map((c,i)=>{
             const sel=cat===c.id;
@@ -7342,7 +7192,7 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
           Begin Reflection
         </button>
         <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",
-          textAlign:"center",margin:"10px 0 0" }}>Up to 15 minutes per segment · Private & encrypted</p>
+          textAlign:"center",margin:"10px 0 0" }}>5–10 minutes · Private & encrypted</p>
       </div>
     </div>
   );
@@ -11821,57 +11671,59 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
   const [showCompare, setShowCompare] = useState(false);
 
   const TIERS=[
-    {id:"free",name:"The Reset",
+    {id:"free",name:"Trial",
       monthly:0, annual:0,
       color:C.textMuted,
-      tagline:"7 days to explore Selah.",
-      features:["Full access for 7 days","AI reflection sessions","Daily Anchor (once daily)","Breathing exercises","Notebook & journal","Letters to God","Gratitude practice","Heavy Day","Crisis resources — always"],
+      tagline:"7 days to experience Selah — no card needed.",
+      features:["2 AI reflections per day","Breathe & guided breathing","Notebook & journal","Heavy Day — lament freely","Gratitude & Letters to God","Biblical Reflections (2 stories)","Prayer Wall (view only)","Crisis resources — always free"],
       locked:[]},
     {id:"foundation",name:"Foundation",
       monthly:6, annual:50,
       color:C.accent,
-      tagline:"Unlimited reflection. Your space, fully yours.",
-      features:["Unlimited AI reflections","Daily or weekly anchor refresh","Quick Check-in","Biblical Reflections (40+ stories)","Armor Up morning routine","Wind Down sleep routine","The Bench — save insights","Self-discovery assessments","Full session history & streaks","All themes, fonts & customization","This Time Last Month insights","Prayer Wall"],
+      tagline:"Your full space. Unlimited reflection.",
+      features:["3 AI reflections per day","Full Biblical Reflections (50+ stories)","Daily Anchor — AI quote & reflection","The Bench — save insights","Quick Check-in","Prayer Wall — post & hold prayers","All themes, fonts & customization","This Time Last Month insights","Full session history & streaks"],
       locked:[]},
     {id:"growth",name:"Growth",
       monthly:12, annual:80,
       color:C.amber, badge:"Most Popular",
-      tagline:"Selah starts to know you.",
-      features:["Everything in Foundation","Twice-daily anchor refresh","Growth Mirror & AI observations","Personalized check-in questions","Weekly recap email","AI daily encouragement","Tone & faith customization","Monthly Pulse Report"],
+      tagline:"Selah starts to know you. Growth gets personal.",
+      features:["5 AI reflections per day","Everything in Foundation","Armor Up morning routine","Wind Down sleep routine","Progress tracker & growth insights","Resources — books & wisdom","Personalized check-in questions","Weekly recap email","AI tone & faith customization","Monthly Wellness Goal","Growth Mirror & AI observations"],
       locked:[]},
     {id:"deep",name:"Deep Reflection",
       monthly:15, annual:100,
       color:C.terra, badge:"Best Value",
-      tagline:"The full Selah experience. Nothing held back.",
-      features:["Everything in Growth","Hourly anchor refresh","Monthly Pulse Report (full depth)","Know Yourself — AI personality assessment","Pattern detection across sessions","Guided challenges (7, 14, 30-day)","Exclusive AI tones (Mentor, Coach)","Extended conversation memory (30 sessions)","Priority responses & early access"],
+      tagline:"Your personal spiritual coach. Nothing held back.",
+      features:["Unlimited AI reflections","Everything in Growth","Know Yourself — AI personality assessment","Pattern detection across sessions","Guided challenges (7, 14, 30-day)","Exclusive AI tones (Mentor, Coach)","Extended memory portrait (30 sessions)","Self-discovery assessments","Priority responses & early access"],
       locked:[]},
   ];
 
-  // Simple comparison rows — scannable, pushes toward Deep
+  // Comparison rows — clean, no duplicates, drives toward Deep
   const COMPARE_ROWS = [
-    { feature:"AI Reflection Sessions",       free:"7 days",  foundation:"Unlimited", growth:"Unlimited",  deep:"Unlimited" },
-    { feature:"Biblical Reflections",           free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"Armor Up (morning sequence)",      free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"Quick Check-in",                free:"Trial",   foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"Armor Up (morning sequence)",      free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"The Bench (saved insights)",       free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"Prayer Wall",                      free:"View",    foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"Self-Discovery Assessments",    free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"Know Yourself (100Q AI Test)",  free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
-    { feature:"Themes & Customization",        free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"Personalized Check-in Questions",free:"—",      foundation:"—",         growth:"✓",          deep:"✓" },
-    { feature:"Weekly Recap Email",            free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
-    { feature:"AI Encouragement & Resources",  free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
-    { feature:"AI-Matched Resources & Search",  free:"—",       foundation:"Books only", growth:"✓",          deep:"✓" },
-    { feature:"Growth Mirror & Observations",  free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
-    { feature:"Tone & Faith Customization",    free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
-    { feature:"Monthly Wellness Goal",          free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
-    { feature:"Pattern Detection",             free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
-    { feature:"\"This Time Last Month\"",      free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"Guided Challenges",             free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
-    { feature:"Exclusive AI Tones",            free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
-    { feature:"Custom Reflection Categories",  free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
-    { feature:"Extended Memory & Priority",    free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
+    { feature:"Daily AI Reflections",         free:"2/day",   foundation:"3/day",     growth:"5/day",      deep:"Unlimited" },
+    { feature:"Breathe, Notebook, Heavy Day", free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
+    { feature:"Gratitude & Letters to God",   free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
+    { feature:"Biblical Reflections",         free:"2 stories",foundation:"Full — 50+",growth:"Full — 50+", deep:"Full — 50+" },
+    { feature:"Prayer Wall",                  free:"View",    foundation:"Post & hold",growth:"Post & hold",deep:"Post & hold" },
+    { feature:"Daily Anchor",                 free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
+    { feature:"The Bench (saved insights)",   free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
+    { feature:"Quick Check-in",               free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
+    { feature:"Themes & Customization",       free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
+    { feature:"This Time Last Month",         free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
+    { feature:"Armor Up (morning routine)",   free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
+    { feature:"Wind Down (sleep routine)",    free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
+    { feature:"Progress Tracker",             free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
+    { feature:"Resources & Books",            free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
+    { feature:"Personalized Check-in",        free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
+    { feature:"Weekly Recap Email",           free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
+    { feature:"AI Tone & Faith Settings",     free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
+    { feature:"Monthly Wellness Goal",        free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
+    { feature:"Growth Mirror & Observations", free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
+    { feature:"Self-Discovery Assessments",   free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
+    { feature:"Know Yourself (AI Test)",      free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
+    { feature:"Pattern Detection",            free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
+    { feature:"Guided Challenges",            free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
+    { feature:"Exclusive AI Tones",           free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
+    { feature:"Extended Memory (30 sessions)",free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
   ];
 
   const active = sel ? TIERS.find(t=>t.id===sel) : null;
@@ -11986,7 +11838,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
                 {trialDaysLeft} day{trialDaysLeft===1?"":"s"} remaining
               </p>
               <p style={{ color:C.textSoft,fontSize:"11px",fontStyle:"italic",margin:0 }}>
-                All features unlocked except Daily Anchor, Assessments, Biblical Reflections, Resources & Reset. Subscribe to keep access.
+                2 AI reflections/day during trial. Subscribe to unlock more.
               </p>
             </div>
           </div>
@@ -12013,7 +11865,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
           <h1 style={{ color:C.textPrimary,fontSize:"clamp(20px,5vw,24px)",
             fontWeight:"normal",margin:"0 0 8px" }}>Choose Your Plan</h1>
           <p style={{ color:C.textSoft,fontSize:"13px",fontStyle:"italic",lineHeight:"1.8",margin:0 }}>
-            Start with 7 days free. Most features unlocked — Anchor, Assessments, Biblical Reflections, Resources & Reset require a paid plan.
+            Start with 7 days free — reflect, breathe, and explore. Upgrade to unlock your full space.
           </p>
         </div>
 
@@ -13171,7 +13023,6 @@ useEffect(() => {
   const [totalActiveDays, setTotalActiveDays] = useState(has("totalActiveDays") ? saved.totalActiveDays : 0);
   const [graceUsedWeek, setGraceUsedWeek] = useState(has("graceUsedWeek") ? saved.graceUsedWeek : null); // {week: string, count: number}
   const [sessionHistory, setSessionHistory] = useState(has("sessionHistory") ? saved.sessionHistory : []);
-  const [reflectDaily, setReflectDaily] = useState(has("reflectDaily") ? saved.reflectDaily : { date: "", count: 0 });
   const [assessmentResults, setAssessmentResults] = useState(has("assessmentResults") ? saved.assessmentResults : {});
   const [userEmail, setUserEmail] = useState(has("userEmail") ? saved.userEmail : null);
   const [autoLoginEmail, setAutoLoginEmail] = useState(null);
@@ -13193,28 +13044,6 @@ useEffect(() => {
   // ── Streak logic ──
   const getDateStr = (d) => new Date(d).toISOString().split("T")[0]; // "YYYY-MM-DD"
   const todayStr = getDateStr(Date.now());
-
-  const reflectLimitVal = adminMode ? Infinity : getDailyReflectLimit(effectiveTier, isTrialActive);
-  const reflectUsedToday = reflectDaily.date === todayStr ? reflectDaily.count : 0;
-  const reflectSlotsInfo = Number.isFinite(reflectLimitVal) && reflectLimitVal > 0
-    ? { used: reflectUsedToday, limit: reflectLimitVal }
-    : null;
-
-  const tryConsumeReflectSlot = () => {
-    if (adminMode) return true;
-    const limit = getDailyReflectLimit(effectiveTier, isTrialActive);
-    if (!Number.isFinite(limit)) return true;
-    if (limit <= 0) return false;
-    const key = todayStr;
-    let allowed = false;
-    setReflectDaily((prev) => {
-      const current = prev.date === key ? prev.count : 0;
-      if (current >= limit) return prev;
-      allowed = true;
-      return { date: key, count: current + 1 };
-    });
-    return allowed;
-  };
 
   // Mark today as active (called on meaningful actions)
   const markActive = () => {
@@ -13311,7 +13140,7 @@ useEffect(() => {
       sharingEnabled, pushEnabled, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
       journalEntries, moodHistory, lastVisit: Date.now(),
       feedbackEntries, lastFeedbackPrompt,
-      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, reflectDaily, assessmentResults, userEmail, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
+      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, assessmentResults, userEmail, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
     });
     // Cloud sync if logged in
     if (authToken) {
@@ -13321,7 +13150,7 @@ useEffect(() => {
         sharingEnabled, pushEnabled, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
         journalEntries, moodHistory, lastVisit: Date.now(),
         feedbackEntries, lastFeedbackPrompt,
-        lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, reflectDaily, assessmentResults, userEmail, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
+        lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, assessmentResults, userEmail, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
       };
       fetch("/api/sync", {
         method: "POST",
@@ -13332,7 +13161,7 @@ useEffect(() => {
   }, [appScreen, themeId, fontId, faithLevel, userName, tier, trialStart, steadyDays,
       sessionCount, sharingEnabled, pushEnabled, isMinorUser, tone, quoteFreq, onboardingAnswers,
       isFirstVisit, journalEntries, moodHistory, feedbackEntries, lastFeedbackPrompt,
-      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, reflectDaily, assessmentResults, userEmail, stripeEmail, seasonalMode, letters, gratitudeLog]);
+      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, assessmentResults, userEmail, stripeEmail, seasonalMode, letters, gratitudeLog]);
 
   // Track returning users
   useEffect(() => {
@@ -13593,10 +13422,6 @@ useEffect(() => {
             isMinorUser={isMinorUser}
             tier={effectiveTier} sessionHistory={sessionHistory}
             seasonalContext={(seasonalMode && currentSeason?.reflectContext) ? currentSeason.reflectContext : null}
-            tryConsumeReflectSlot={tryConsumeReflectSlot}
-            onUpgrade={()=>setShowSub(true)}
-            reflectSlotsInfo={reflectSlotsInfo}
-            isTrialForLimit={isTrialActive && effectiveTier === "free"}
             onSessionComplete={(sessionData)=>{
               setSessionCount(s=>s+1);
               markActive();
@@ -13609,8 +13434,7 @@ useEffect(() => {
       }
       case "journal": return <JournalScreen C={C} font={font} setScreen={setScreen} entries={journalEntries} setEntries={setJournalEntries} onActive={markActive}/>;
       case "progress": {
-        // Progress requires Foundation+ — paid only, trial does NOT unlock
-        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation) {
+        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.growth) {
           return (
             <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
               padding:"60px 20px", boxSizing:"border-box" }}>
@@ -13619,7 +13443,7 @@ useEffect(() => {
                   cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
                 <UpgradeGate C={C} font={font}
                   feature="Progress Tracking"
-                  requiredTier="foundation"
+                  requiredTier="growth"
                   onUpgrade={()=>setShowSub(true)}/>
               </div>
             </div>
@@ -13641,8 +13465,8 @@ useEffect(() => {
           benchItems={benchItems} setBenchItems={setBenchItems}/>;
       }
       case "armorup": {
-        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation && !isTrialActive) {
-          setScreen("home"); return null;
+        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.growth) {
+          setShowSub(true); setScreen("home"); return null;
         }
         return <ArmorUpScreen C={SC} font={font}
           faithLevel={faithLevel}
@@ -13697,7 +13521,7 @@ useEffect(() => {
         return <GratitudeScreen C={SC} font={font} setScreen={setScreen}
           userName={userName} gratitudeLog={gratitudeLog} setGratitudeLog={setGratitudeLog}/>;
       case "winddown": {
-        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation && !isTrialActive) {
+        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.growth) {
           return (
             <div style={{ minHeight:"100vh", background:SC.bgPrimary, fontFamily:font,
               padding:"60px 20px", boxSizing:"border-box" }}>
@@ -13706,7 +13530,7 @@ useEffect(() => {
                   cursor:"pointer",color:SC.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
                 <UpgradeGate C={SC} font={font}
                   feature="Wind Down"
-                  requiredTier="foundation"
+                  requiredTier="growth"
                   onUpgrade={()=>setShowSub(true)}/>
               </div>
             </div>
@@ -13760,12 +13584,6 @@ useEffect(() => {
                   if(cloud.journalEntries?.length>journalEntries.length) setJournalEntries(cloud.journalEntries);
                   if(cloud.moodHistory?.length>moodHistory.length) setMoodHistory(cloud.moodHistory);
                   if(cloud.sessionHistory?.length>sessionHistory.length) setSessionHistory(cloud.sessionHistory);
-                  if(cloud.reflectDaily?.date === todayStr) {
-                    setReflectDaily((prev) => {
-                      if (prev.date !== todayStr) return cloud.reflectDaily;
-                      return { date: todayStr, count: Math.max(prev.count, cloud.reflectDaily.count || 0) };
-                    });
-                  }
                   if(cloud.steadyDays>steadyDays) setSteadyDays(cloud.steadyDays);
                   if(cloud.bestStreak>bestStreak) setBestStreak(cloud.bestStreak);
                   if(cloud.totalActiveDays>totalActiveDays) setTotalActiveDays(cloud.totalActiveDays);
@@ -13807,8 +13625,7 @@ useEffect(() => {
           onShowTour={()=>{ setShowTutorial(true); setScreen("home"); }}/>
       );
       case "resources": {
-        // Resources require Foundation+ — paid only, trial does NOT unlock
-        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation) {
+        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.growth) {
           return (
             <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
               padding:"60px 20px", boxSizing:"border-box" }}>
@@ -13817,7 +13634,7 @@ useEffect(() => {
                   cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
                 <UpgradeGate C={C} font={font}
                   feature="Resources"
-                  requiredTier="foundation"
+                  requiredTier="growth"
                   onUpgrade={()=>setShowSub(true)}/>
               </div>
             </div>
@@ -13826,8 +13643,8 @@ useEffect(() => {
         return <ResourcesScreen C={SC} font={font} setScreen={setScreen} onboardingAnswers={onboardingAnswers} faithLevel={faithLevel} tier={effectiveTier} sessionHistory={sessionHistory} moodHistory={moodHistory}/>;
       }
       case "stories": {
-        // Biblical Reflections require Foundation+ — paid only, trial does NOT unlock
-        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation) {
+        // Trial gets access but limited to 2 stories — BibleStoriesScreen handles the limit internally
+        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation && !isTrialActive) {
           return (
             <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
               padding:"60px 20px", boxSizing:"border-box" }}>
@@ -13838,19 +13655,14 @@ useEffect(() => {
                   feature="Biblical Reflections"
                   requiredTier="foundation"
                   onUpgrade={()=>setShowSub(true)}/>
-                <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
-                  textAlign:"center", lineHeight:"1.8", marginTop:"16px" }}>
-                  Real stories from Scripture — told straight, with reflections that meet you where you are. Subscribe to unlock.
-                </p>
               </div>
             </div>
           );
         }
-        return <BibleStoriesScreen C={C} font={font} setScreen={setScreen} faithLevel={faithLevel}/>;
+        return <BibleStoriesScreen C={C} font={font} setScreen={setScreen} faithLevel={faithLevel} isTrialActive={isTrialActive} onUpgrade={()=>setShowSub(true)}/>;
       }
       case "assessments": {
-        // Assessments require Foundation+ — trial does NOT unlock
-        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation) {
+        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.deep) {
           return (
             <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
               padding:"60px 20px", boxSizing:"border-box" }}>
@@ -13859,11 +13671,11 @@ useEffect(() => {
                   cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
                 <UpgradeGate C={C} font={font}
                   feature="Self-Discovery Assessments"
-                  requiredTier="foundation"
+                  requiredTier="deep"
                   onUpgrade={()=>setShowSub(true)}/>
                 <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
                   textAlign:"center", lineHeight:"1.8", marginTop:"16px" }}>
-                  Assessments help you understand your personality, patterns, and wiring. Subscribe to unlock them.
+                  Deep personality assessments powered by AI. Upgrade to Deep Reflection to unlock.
                 </p>
               </div>
             </div>
@@ -13912,12 +13724,6 @@ useEffect(() => {
                 if(cloud.journalEntries?.length>journalEntries.length) setJournalEntries(cloud.journalEntries);
                 if(cloud.moodHistory?.length>moodHistory.length) setMoodHistory(cloud.moodHistory);
                 if(cloud.sessionHistory?.length>sessionHistory.length) setSessionHistory(cloud.sessionHistory);
-                if(cloud.reflectDaily?.date === todayStr) {
-                  setReflectDaily((prev) => {
-                    if (prev.date !== todayStr) return cloud.reflectDaily;
-                    return { date: todayStr, count: Math.max(prev.count, cloud.reflectDaily.count || 0) };
-                  });
-                }
                 if(cloud.steadyDays>steadyDays) setSteadyDays(cloud.steadyDays);
                 if(cloud.onboardingAnswers?.name){
                   setOnboardingAnswers(cloud.onboardingAnswers);
