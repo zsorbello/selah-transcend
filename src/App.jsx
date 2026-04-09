@@ -6118,8 +6118,8 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
             </p>
             <div style={{ display:"flex", flexDirection:"column", gap:"8px" }}>
               {[
-                {icon:((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?"🔒":"💬", label:"Start a reflection", sub:((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?"🔒 Foundation+":"Talk through what's on your mind", action:()=>((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?onUpgrade():setScreen("reflect"), color:((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?C.textMuted:C.accent},
-                {icon:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒":"⚡", label:"Quick 2-min check-in", sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"Log your mood in under a minute", action:()=>(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?onUpgrade():setScreen("checkin"), color:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?C.textMuted:C.amber},
+                {icon:"💬", label:"Start a reflection", sub:"Talk through what's on your mind", action:()=>setScreen("reflect"), color:C.accent},
+                {icon:((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?"🔒":"⚡", label:"Quick 2-min check-in", sub:((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?"🔒 Foundation+":"Log your mood in under a minute", action:()=>((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?onUpgrade():setScreen("checkin"), color:((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?C.textMuted:C.amber},
                 {icon:"◈", label:"Breathing exercise", sub:"Calm your nervous system first", action:()=>setScreen("breathe"), color:C.sage},
               ].map(item => (
                 <button key={item.label} onClick={item.action} style={{
@@ -6276,7 +6276,7 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
           {[
             {icon:"◈",label:"Reflect",sub:"Begin a session",bg:`${C.sage}15`,color:C.sage,border:`${C.sage}22`,screen:"reflect"},
             {icon:"✍️",label:"Notebook",sub:"Write freely",bg:`${C.terra}12`,color:C.terra,border:`${C.terra}20`,screen:"journal"},
-            {icon:"📜",label:"Biblical Reflections",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive?"🔒 Foundation+":"Real stories, told straight",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}15`,screen:"stories"},
+            {icon:"📜",label:"Biblical Reflections",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"Real stories, told straight",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}15`,screen:"stories"},
             {icon:"🌑",label:"Heavy Day",sub:"Lament. Be honest.",bg:`${C.terra}08`,color:C.terra,border:`${C.terra}18`,screen:"heavyday"},
             {icon:"🙏",label:"Gratitude",sub:"Count your blessings",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}18`,screen:"gratitude"},
             {icon:"✉️",label:"Letters to God",sub:"Just you and God",bg:`${C.sage}10`,color:C.sage,border:`${C.sage}20`,screen:"letters"},
@@ -11675,7 +11675,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
       monthly:0, annual:0,
       color:C.textMuted,
       tagline:"7 days to experience Selah — no card needed.",
-      features:["2 AI reflections per day","Breathe & guided breathing","Notebook & journal","Heavy Day — lament freely","Gratitude & Letters to God","Biblical Reflections (2 stories)","Prayer Wall (view only)","Crisis resources — always free"],
+      features:["2 AI reflections per day","Breathe & guided breathing","Notebook & journal","Heavy Day — lament freely","Gratitude & Letters to God","Prayer Wall (view only)","Crisis resources — always free"],
       locked:[]},
     {id:"foundation",name:"Foundation",
       monthly:6, annual:50,
@@ -11702,7 +11702,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
     { feature:"Daily AI Reflections",         free:"2/day",   foundation:"3/day",     growth:"5/day",      deep:"Unlimited" },
     { feature:"Breathe, Notebook, Heavy Day", free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Gratitude & Letters to God",   free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"Biblical Reflections",         free:"2 stories",foundation:"Full — 50+",growth:"Full — 50+", deep:"Full — 50+" },
+    { feature:"Biblical Reflections",         free:"—",       foundation:"Full — 50+",growth:"Full — 50+", deep:"Full — 50+" },
     { feature:"Prayer Wall",                  free:"View",    foundation:"Post & hold",growth:"Post & hold",deep:"Post & hold" },
     { feature:"Daily Anchor",                 free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"The Bench (saved insights)",   free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
@@ -13643,8 +13643,7 @@ useEffect(() => {
         return <ResourcesScreen C={SC} font={font} setScreen={setScreen} onboardingAnswers={onboardingAnswers} faithLevel={faithLevel} tier={effectiveTier} sessionHistory={sessionHistory} moodHistory={moodHistory}/>;
       }
       case "stories": {
-        // Trial gets access but limited to 2 stories — BibleStoriesScreen handles the limit internally
-        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation && !isTrialActive) {
+        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation) {
           return (
             <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
               padding:"60px 20px", boxSizing:"border-box" }}>
@@ -13655,11 +13654,15 @@ useEffect(() => {
                   feature="Biblical Reflections"
                   requiredTier="foundation"
                   onUpgrade={()=>setShowSub(true)}/>
+                <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
+                  textAlign:"center", lineHeight:"1.8", marginTop:"16px" }}>
+                  50 real stories from Scripture — told straight, with reflections that meet you where you are. Subscribe to unlock.
+                </p>
               </div>
             </div>
           );
         }
-        return <BibleStoriesScreen C={C} font={font} setScreen={setScreen} faithLevel={faithLevel} isTrialActive={isTrialActive} onUpgrade={()=>setShowSub(true)}/>;
+        return <BibleStoriesScreen C={C} font={font} setScreen={setScreen} faithLevel={faithLevel}/>;
       }
       case "assessments": {
         if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.deep) {
