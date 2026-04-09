@@ -1,5 +1,5 @@
-import express from 'express';
 import cors from 'cors';
+import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -24,14 +24,14 @@ const PORT = process.env.PORT || 3000;
 // CORS
 app.use(cors());
 
-// Parse JSON for all routes except stripe-webhook (needs raw body for signature verification)
+// Parse JSON for all routes except stripe-webhook
 app.use('/api/stripe-webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
-// Serve static frontend from dist/
-app.use(express.static(path.join(__dirname, 'dist')));
+// Serve static frontend from public
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Mount API routes — each handler uses the Vercel (req, res) signature which is Express-compatible
+// Mount API routes
 app.all('/api/analytics', analytics);
 app.all('/api/auth', auth);
 app.all('/api/chat', chat);
@@ -45,9 +45,14 @@ app.all('/api/stripe-webhook', stripeWebhook);
 app.all('/api/sync', sync);
 app.all('/api/verify-payment', verifyPayment);
 
-// SPA fallback — serve index.html for any non-API route
+// Homepage route
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// SPA fallback for any non-API route
 app.get('{*path}', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.listen(PORT, () => {
