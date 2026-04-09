@@ -41,3 +41,9 @@ app-example
 # generated native folders
 /ios
 /android
+
+.vercel/
+Selah-Master-Backup/
+Selah-Master-Backup2/
+selah-transcend/
+App_v*.jsx
