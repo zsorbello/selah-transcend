@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "node server.js",
+    "build": "vite build",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
@@ -45,9 +46,11 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vite": "^8.0.8"
   },
   "private": true
 }

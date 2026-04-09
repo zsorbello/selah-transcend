@@ -21,18 +21,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS
 app.use(cors());
 
-// Parse JSON for all routes except stripe-webhook
 app.use('/api/stripe-webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
-// Serve static assets from public
+app.use(express.static(path.join(__dirname, 'dist')));
 app.use('/public', express.static(path.join(__dirname, 'public')));
-app.use(express.static(__dirname));
 
-// Mount API routes
 app.all('/api/analytics', analytics);
 app.all('/api/auth', auth);
 app.all('/api/chat', chat);
@@ -46,14 +42,12 @@ app.all('/api/stripe-webhook', stripeWebhook);
 app.all('/api/sync', sync);
 app.all('/api/verify-payment', verifyPayment);
 
-// Homepage route
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-// SPA fallback for any non-API route
 app.get('{*path}', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 app.listen(PORT, () => {
