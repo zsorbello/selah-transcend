@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef, Component } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback, Component } from "react";
+import { createPortal } from "react-dom";
+import { SEASONAL_JOURNEYS, defaultJourneyProgress } from "./seasonalJourneys";
 
 // ═══════════════════════════════════════════════════════
 // ERROR BOUNDARY
@@ -102,6 +104,712 @@ function loadFromStorage() {
 
 function clearStorage() {
   try { localStorage.removeItem(STORAGE_KEY); } catch {}
+}
+
+// ═══════════════════════════════════════════════════════
+// APP LOCK (local PIN + optional WebAuthn biometrics)
+// ═══════════════════════════════════════════════════════
+
+/** Dark warm unlock screen — matches Charcoal & Amber theme; always Georgia for consistency */
+const APP_LOCK_SCREEN_C = {
+  bgPrimary: "#1C1A18",
+  bgSecondary: "#242018",
+  bgCard: "#2E2A24",
+  textPrimary: "#F0E8D8",
+  textSoft: "#C0B098",
+  textMuted: "#7A6A58",
+  sage: "#8A9A84",
+  sageDark: "#6A7A64",
+  sageLight: "#AAB8A4",
+  amber: "#D6A85F",
+  amberLight: "#E8C888",
+  terra: "#C47A5A",
+  accent: "#D6A85F",
+  accentAlt: "#8A9A84",
+  border: "#3A3430",
+  navBg: "#141210",
+};
+const APP_LOCK_FONT = "Georgia, serif";
+
+function bufferToBase64url(buf) {
+  const bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf;
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64urlToBuffer(s) {
+  if (!s || typeof s !== "string") return new Uint8Array(0);
+  let b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4;
+  if (pad) b64 += "=".repeat(4 - pad);
+  const bin = atob(b64);
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+async function hashAppLockPin(pin) {
+  const enc = new TextEncoder().encode("selah-lock-v1|" + pin);
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return bufferToBase64url(buf);
+}
+
+function webAuthnSupported() {
+  return typeof window !== "undefined" && window.PublicKeyCredential && typeof navigator.credentials?.create === "function";
+}
+
+async function createSelahWebAuthnCredential() {
+  const pk = {
+    challenge: crypto.getRandomValues(new Uint8Array(32)),
+    rp: { name: "Selah", id: window.location.hostname },
+    user: {
+      id: crypto.getRandomValues(new Uint8Array(16)),
+      name: "selah@local",
+      displayName: "Selah",
+    },
+    pubKeyCredParams: [
+      { type: "public-key", alg: -7 },
+      { type: "public-key", alg: -257 },
+    ],
+    authenticatorSelection: {
+      authenticatorAttachment: "platform",
+      userVerification: "preferred",
+    },
+    timeout: 90000,
+    attestation: "none",
+  };
+  const cred = await navigator.credentials.create({ publicKey: pk });
+  if (!cred || cred.type !== "public-key") return null;
+  return bufferToBase64url(cred.rawId);
+}
+
+async function verifySelahWebAuthn(credentialIdB64url) {
+  const id = base64urlToBuffer(credentialIdB64url);
+  if (!id.length) return false;
+  try {
+    const cred = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rpId: window.location.hostname,
+        allowCredentials: [{ type: "public-key", id }],
+        userVerification: "preferred",
+        timeout: 90000,
+      },
+    });
+    return !!(cred && cred.type === "public-key");
+  } catch {
+    return false;
+  }
+}
+
+function PinDots({ C, n, max }) {
+  return (
+    <div style={{ display: "flex", gap: "10px", justifyContent: "center", marginBottom: "16px" }}>
+      {Array.from({ length: max }, (_, i) => (
+        <div
+          key={i}
+          style={{
+            width: "12px",
+            height: "12px",
+            borderRadius: "50%",
+            background: i < n ? C.sage : C.border,
+            opacity: i < n ? 1 : 0.45,
+            transition: "background 0.15s ease",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function AppLockSetupModal({ C, font, mode, onSkip, onSetupComplete, onClose }) {
+  const firstRun = mode === "firstRun";
+  const [step, setStep] = useState(() => (firstRun ? "intro" : "choose"));
+  const [method, setMethod] = useState("pin"); // pin | webauthn
+  const [pin, setPin] = useState("");
+  const [pin2, setPin2] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [pendingCredId, setPendingCredId] = useState("");
+
+  const bioOk = webAuthnSupported();
+
+  const resetPin = () => {
+    setPin("");
+    setPin2("");
+    setErr("");
+  };
+
+  const finishWithPinHash = async (pinHash, credentialId) => {
+    await onSetupComplete({
+      enabled: true,
+      method: credentialId ? "webauthn" : "pin",
+      pinHash,
+      webAuthnCredentialId: credentialId || "",
+    });
+    resetPin();
+    setPendingCredId("");
+    if (onClose) onClose();
+  };
+
+  const submitCreatePin = async () => {
+    setErr("");
+    if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
+      setErr("Enter 4 digits.");
+      return;
+    }
+    if (pin !== pin2) {
+      setErr("PINs don't match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const h = await hashAppLockPin(pin);
+      if (pendingCredId) await finishWithPinHash(h, pendingCredId);
+      else await finishWithPinHash(h, "");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runBiometricRegister = async () => {
+    setErr("");
+    setBusy(true);
+    try {
+      const id = await createSelahWebAuthnCredential();
+      if (!id) {
+        setErr("Couldn't set up Face ID / Touch ID. Try PIN instead.");
+        setBusy(false);
+        return;
+      }
+      setPendingCredId(id);
+      setPin("");
+      setPin2("");
+      setStep("backupPin");
+    } catch {
+      setErr("Biometric setup was cancelled or failed. Try PIN, or try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const appendDigit = (d, which) => {
+    setErr("");
+    if (which === "a" && pin.length < 4) setPin((p) => p + d);
+    if (which === "b" && pin2.length < 4) setPin2((p) => p + d);
+  };
+  const backspace = (which) => {
+    if (which === "a") setPin((p) => p.slice(0, -1));
+    if (which === "b") setPin2((p) => p.slice(0, -1));
+  };
+
+  const Keypad = ({ value, which }) => (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px", maxWidth: "260px", margin: "0 auto" }}>
+      {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((k) => (
+        <button
+          key={k || "sp"}
+          type="button"
+          disabled={!k || busy}
+          onClick={() => {
+            if (k === "⌫") backspace(which);
+            else if (k) appendDigit(k, which);
+          }}
+          style={{
+            padding: "14px",
+            borderRadius: "8px",
+            border: `1px solid ${C.border}`,
+            background: k ? C.bgSecondary : "transparent",
+            color: C.textPrimary,
+            fontSize: "16px",
+            fontFamily: font,
+            cursor: k ? "pointer" : "default",
+          }}
+        >
+          {k}
+        </button>
+      ))}
+    </div>
+  );
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 480,
+        padding: "24px",
+        fontFamily: font,
+      }}
+    >
+      <div
+        style={{
+          background: C.bgPrimary,
+          borderRadius: "12px",
+          padding: "28px 22px",
+          maxWidth: "400px",
+          width: "100%",
+          border: `1px solid ${C.sage}33`,
+          boxShadow: `0 16px 48px rgba(0,0,0,0.12)`,
+        }}
+      >
+        {step === "intro" && (
+          <>
+            <p style={{ color: C.amber, fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", fontStyle: "italic", margin: "0 0 8px" }}>
+              Privacy
+            </p>
+            <h2 style={{ color: C.textPrimary, fontSize: "clamp(18px,4vw,22px)", fontWeight: "normal", margin: "0 0 12px", lineHeight: 1.45 }}>
+              Protect your space?
+            </h2>
+            <p style={{ color: C.textSoft, fontSize: "13px", fontStyle: "italic", lineHeight: 1.85, margin: "0 0 22px" }}>
+              Lock Selah when you&apos;re away — with a PIN or your device&apos;s Face ID / Touch ID. You can always change this later in Settings.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  onSkip();
+                  if (onClose) onClose();
+                }}
+                style={{
+                  background: "none",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: "3px",
+                  color: C.textMuted,
+                  fontSize: "10px",
+                  letterSpacing: "2px",
+                  textTransform: "uppercase",
+                  padding: "14px",
+                  cursor: "pointer",
+                  fontFamily: font,
+                  fontStyle: "italic",
+                }}
+              >
+                Skip for now
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep("choose")}
+                style={{
+                  background: C.sage,
+                  border: "none",
+                  borderRadius: "3px",
+                  color: "#fff",
+                  fontSize: "11px",
+                  letterSpacing: "3px",
+                  textTransform: "uppercase",
+                  padding: "16px",
+                  cursor: "pointer",
+                  fontFamily: font,
+                  fontStyle: "italic",
+                  boxShadow: `0 2px 12px ${C.sage}44`,
+                }}
+              >
+                Yes — set up a lock
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === "choose" && (
+          <>
+            <p style={{ color: C.amber, fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", fontStyle: "italic", margin: "0 0 8px" }}>
+              App lock
+            </p>
+            <h2 style={{ color: C.textPrimary, fontSize: "clamp(17px,4vw,20px)", fontWeight: "normal", margin: "0 0 14px" }}>
+              How should we unlock?
+            </h2>
+            <p style={{ color: C.textSoft, fontSize: "12px", fontStyle: "italic", lineHeight: 1.8, margin: "0 0 16px" }}>
+              {bioOk
+                ? "Face ID / Touch ID uses your device. If it ever fails, you'll use your backup PIN."
+                : "Use a 4-digit PIN. (Biometrics aren't available in this browser.)"}
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {bioOk && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setMethod("webauthn");
+                    runBiometricRegister();
+                  }}
+                  style={{
+                    background: `${C.sage}18`,
+                    border: `1px solid ${C.sage}44`,
+                    borderRadius: "8px",
+                    color: C.textPrimary,
+                    fontSize: "12px",
+                    padding: "14px",
+                    cursor: busy ? "default" : "pointer",
+                    fontFamily: font,
+                    fontStyle: "italic",
+                    textAlign: "left",
+                  }}
+                >
+                  <span style={{ display: "block", fontSize: "10px", letterSpacing: "2px", color: C.sage, marginBottom: "4px" }}>DEVICE</span>
+                  Face ID / Touch ID (+ backup PIN)
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setMethod("pin");
+                  setPendingCredId("");
+                  resetPin();
+                  setStep("pinCreate");
+                }}
+                style={{
+                  background: C.bgSecondary,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: "8px",
+                  color: C.textPrimary,
+                  fontSize: "12px",
+                  padding: "14px",
+                  cursor: busy ? "default" : "pointer",
+                  fontFamily: font,
+                  fontStyle: "italic",
+                  textAlign: "left",
+                }}
+              >
+                <span style={{ display: "block", fontSize: "10px", letterSpacing: "2px", color: C.amber, marginBottom: "4px" }}>SIMPLE</span>
+                4-digit PIN only
+              </button>
+            </div>
+            {firstRun && (
+              <button
+                type="button"
+                onClick={() => {
+                  onSkip();
+                  if (onClose) onClose();
+                }}
+                style={{
+                  marginTop: "16px",
+                  background: "none",
+                  border: "none",
+                  color: C.textMuted,
+                  fontSize: "11px",
+                  cursor: "pointer",
+                  fontFamily: font,
+                  width: "100%",
+                }}
+              >
+                Skip for now
+              </button>
+            )}
+            {!firstRun && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (onClose) onClose();
+                }}
+                style={{
+                  marginTop: "16px",
+                  background: "none",
+                  border: "none",
+                  color: C.textMuted,
+                  fontSize: "11px",
+                  cursor: "pointer",
+                  fontFamily: font,
+                  width: "100%",
+                }}
+              >
+                Cancel
+              </button>
+            )}
+            {err && (
+              <p style={{ color: C.terra, fontSize: "11px", fontStyle: "italic", marginTop: "12px" }}>{err}</p>
+            )}
+          </>
+        )}
+
+        {step === "pinCreate" && (
+          <>
+            <p style={{ color: C.amber, fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", fontStyle: "italic", margin: "0 0 8px" }}>
+              Create PIN
+            </p>
+            <h2 style={{ color: C.textPrimary, fontSize: "18px", fontWeight: "normal", margin: "0 0 6px" }}>
+              Choose 4 digits
+            </h2>
+            <p style={{ color: C.textMuted, fontSize: "11px", margin: "0 0 12px" }}>Enter twice to confirm.</p>
+            <p style={{ color: C.textSoft, fontSize: "11px", margin: "0 0 6px" }}>First entry</p>
+            <PinDots C={C} n={pin.length} max={4} />
+            <Keypad value={pin} which="a" />
+            <p style={{ color: C.textSoft, fontSize: "11px", margin: "16px 0 6px" }}>Confirm</p>
+            <PinDots C={C} n={pin2.length} max={4} />
+            <Keypad value={pin2} which="b" />
+            {err && <p style={{ color: C.terra, fontSize: "11px", fontStyle: "italic", marginTop: "8px" }}>{err}</p>}
+            <button
+              type="button"
+              disabled={busy || pin.length !== 4 || pin2.length !== 4}
+              onClick={submitCreatePin}
+              style={{
+                marginTop: "16px",
+                width: "100%",
+                background: C.sage,
+                border: "none",
+                borderRadius: "3px",
+                color: "#fff",
+                fontSize: "10px",
+                letterSpacing: "2px",
+                textTransform: "uppercase",
+                padding: "14px",
+                cursor: "pointer",
+                fontFamily: font,
+                fontStyle: "italic",
+                opacity: busy || pin.length !== 4 || pin2.length !== 4 ? 0.5 : 1,
+              }}
+            >
+              Save PIN
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                resetPin();
+                setStep("choose");
+              }}
+              style={{
+                marginTop: "10px",
+                background: "none",
+                border: "none",
+                color: C.textMuted,
+                fontSize: "11px",
+                cursor: "pointer",
+                width: "100%",
+              }}
+            >
+              Back
+            </button>
+          </>
+        )}
+
+        {step === "backupPin" && (
+          <>
+            <p style={{ color: C.amber, fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", fontStyle: "italic", margin: "0 0 8px" }}>
+              Backup PIN
+            </p>
+            <h2 style={{ color: C.textPrimary, fontSize: "18px", fontWeight: "normal", margin: "0 0 10px" }}>
+              Set a 4-digit backup
+            </h2>
+            <p style={{ color: C.textSoft, fontSize: "12px", fontStyle: "italic", lineHeight: 1.8, margin: "0 0 14px" }}>
+              If Face ID or Touch ID doesn&apos;t work, you&apos;ll use this PIN — same as your primary unlock in that case.
+            </p>
+            <p style={{ color: C.textSoft, fontSize: "11px", margin: "0 0 6px" }}>First entry</p>
+            <PinDots C={C} n={pin.length} max={4} />
+            <Keypad value={pin} which="a" />
+            <p style={{ color: C.textSoft, fontSize: "11px", margin: "16px 0 6px" }}>Confirm</p>
+            <PinDots C={C} n={pin2.length} max={4} />
+            <Keypad value={pin2} which="b" />
+            {err && <p style={{ color: C.terra, fontSize: "11px", fontStyle: "italic", marginTop: "8px" }}>{err}</p>}
+            <button
+              type="button"
+              disabled={busy || pin.length !== 4 || pin2.length !== 4}
+              onClick={submitCreatePin}
+              style={{
+                marginTop: "16px",
+                width: "100%",
+                background: C.sage,
+                border: "none",
+                borderRadius: "3px",
+                color: "#fff",
+                fontSize: "10px",
+                letterSpacing: "2px",
+                textTransform: "uppercase",
+                padding: "14px",
+                cursor: "pointer",
+                fontFamily: font,
+                fontStyle: "italic",
+              }}
+            >
+              Finish setup
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AppLockScreen({
+  appLockMethod,
+  appLockPinHash,
+  appLockWebAuthnCredentialId,
+  onUnlocked,
+}) {
+  const C = APP_LOCK_SCREEN_C;
+  const font = APP_LOCK_FONT;
+  const [phase, setPhase] = useState(() => (appLockMethod === "webauthn" && appLockWebAuthnCredentialId ? "tryBio" : "pin"));
+  const [pin, setPin] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (phase !== "tryBio" || !appLockWebAuthnCredentialId) return;
+      setBusy(true);
+      const ok = await verifySelahWebAuthn(appLockWebAuthnCredentialId);
+      if (cancelled) return;
+      setBusy(false);
+      if (ok) onUnlocked();
+      else setPhase("pin");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, appLockWebAuthnCredentialId, onUnlocked]);
+
+  const tryBioAgain = async () => {
+    setErr("");
+    setBusy(true);
+    const ok = await verifySelahWebAuthn(appLockWebAuthnCredentialId);
+    setBusy(false);
+    if (ok) onUnlocked();
+    else {
+      setErr("Biometric sign-in didn't work. Use your PIN.");
+      setPhase("pin");
+      setPin("");
+    }
+  };
+
+  const submitPin = async () => {
+    setErr("");
+    if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
+      setErr("Enter your 4-digit PIN.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const h = await hashAppLockPin(pin);
+      if (h === appLockPinHash) {
+        onUnlocked();
+        setPin("");
+      } else {
+        setErr("That PIN doesn't match.");
+        setPin("");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const appendDigit = (d) => {
+    setErr("");
+    if (pin.length < 4) setPin((p) => p + d);
+  };
+  const backspace = () => setPin((p) => p.slice(0, -1));
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: C.bgPrimary,
+        zIndex: 520,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "32px 24px",
+        fontFamily: font,
+      }}
+    >
+      <div style={{ marginBottom: "20px" }}>
+        <WaveLogo size={40} color={C.sage} />
+      </div>
+      <p style={{ color: C.amber, fontSize: "10px", letterSpacing: "3px", textTransform: "uppercase", fontStyle: "italic", margin: "0 0 8px" }}>
+        Locked
+      </p>
+      <h1 style={{ color: C.textPrimary, fontSize: "clamp(20px,5vw,24px)", fontWeight: "normal", margin: "0 0 8px", textAlign: "center" }}>
+        Welcome back
+      </h1>
+      <p style={{ color: C.textSoft, fontSize: "13px", fontStyle: "italic", textAlign: "center", lineHeight: 1.75, margin: "0 0 24px", maxWidth: "320px" }}>
+        {phase === "tryBio" && !err
+          ? "Use Face ID / Touch ID to unlock…"
+          : "Enter your PIN to unlock Selah."}
+      </p>
+
+      {appLockMethod === "webauthn" && appLockWebAuthnCredentialId && phase === "pin" && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={tryBioAgain}
+          style={{
+            marginBottom: "16px",
+            background: `${C.sage}18`,
+            border: `1px solid ${C.sage}44`,
+            borderRadius: "8px",
+            color: C.textPrimary,
+            fontSize: "12px",
+            padding: "12px 18px",
+            cursor: busy ? "default" : "pointer",
+            fontFamily: font,
+            fontStyle: "italic",
+          }}
+        >
+          Try Face ID / Touch ID again
+        </button>
+      )}
+
+      {phase === "pin" && (
+        <>
+          <PinDots C={C} n={pin.length} max={4} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px", maxWidth: "260px", margin: "0 auto 12px" }}>
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((k) => (
+              <button
+                key={k || "sp"}
+                type="button"
+                disabled={!k || busy}
+                onClick={() => {
+                  if (k === "⌫") backspace();
+                  else if (k) appendDigit(k);
+                }}
+                style={{
+                  padding: "14px",
+                  borderRadius: "8px",
+                  border: `1px solid ${C.border}`,
+                  background: k ? C.bgSecondary : "transparent",
+                  color: C.textPrimary,
+                  fontSize: "16px",
+                  fontFamily: font,
+                  cursor: k ? "pointer" : "default",
+                }}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            disabled={busy || pin.length !== 4}
+            onClick={submitPin}
+            style={{
+              background: C.sage,
+              border: "none",
+              borderRadius: "3px",
+              color: "#fff",
+              fontSize: "10px",
+              letterSpacing: "2px",
+              textTransform: "uppercase",
+              padding: "12px 28px",
+              cursor: pin.length === 4 && !busy ? "pointer" : "default",
+              fontFamily: font,
+              fontStyle: "italic",
+              opacity: pin.length === 4 && !busy ? 1 : 0.45,
+            }}
+          >
+            Unlock
+          </button>
+        </>
+      )}
+
+      {err && (
+        <p style={{ color: C.terra, fontSize: "12px", fontStyle: "italic", marginTop: "16px", textAlign: "center" }}>{err}</p>
+      )}
+    </div>
+  );
 }
 
 // ═══════════════════════════════════════════════════════
@@ -238,6 +946,197 @@ function Label({ text, color, font }) {
 
 // Tier access helper: returns true if user has access to a given tier level
 const TIER_LEVELS = { free:0, foundation:1, growth:2, deep:3 };
+
+/** Streak grace days per calendar week (Mon–Sun). Trial/free: none; Foundation/Growth: 1; Deep: 2. */
+function weeklyStreakGraceBudget(tier, isTrialActive) {
+  if (isTrialActive) return 0;
+  const level = TIER_LEVELS[tier] ?? 0;
+  if (level < TIER_LEVELS.foundation) return 0;
+  if (level >= TIER_LEVELS.deep) return 2;
+  return 1;
+}
+
+function mergeJourneyProgressState(prev, cloud) {
+  if (!cloud || typeof cloud !== "object") return prev;
+  const mergedCompleted = [...new Set([...(prev.completed || []), ...(cloud.completed || [])])];
+  const by = { ...prev.byJourney };
+  for (const jid of Object.keys(cloud.byJourney || {})) {
+    const a = by[jid] || { completed: 0, lastDate: null };
+    const b = cloud.byJourney[jid];
+    if (!b) continue;
+    if (b.completed > a.completed) by[jid] = { completed: b.completed, lastDate: b.lastDate || a.lastDate };
+    else if (b.completed === a.completed && b.lastDate && (!a.lastDate || String(b.lastDate) > String(a.lastDate)))
+      by[jid] = { ...a, lastDate: b.lastDate };
+  }
+  return {
+    activeId: prev.activeId || cloud.activeId || null,
+    byJourney: by,
+    completed: mergedCompleted,
+  };
+}
+
+const REFLECT_MOOD_LABELS = ["Very low", "Low", "Neutral", "Good", "Great"];
+
+function moodLabelNearSession(moodHistory, sessionDateIso) {
+  if (!moodHistory?.length || !sessionDateIso) return null;
+  const t = new Date(sessionDateIso).getTime();
+  let best = null;
+  let bestDelta = Infinity;
+  for (const m of moodHistory) {
+    if (!m?.date) continue;
+    const d = Math.abs(new Date(m.date).getTime() - t);
+    if (d < bestDelta && d < 36 * 60 * 60 * 1000) {
+      bestDelta = d;
+      best = m;
+    }
+  }
+  if (!best || best.mood == null) return null;
+  const base = REFLECT_MOOD_LABELS[best.mood] ?? `level ${best.mood}`;
+  const w = best.word && String(best.word).trim();
+  return w ? `${base} (word: "${w.slice(0, 48)}")` : base;
+}
+
+function savedReflectionBySessionId(savedReflections, id) {
+  if (id == null || !savedReflections?.length) return null;
+  return savedReflections.find((s) => s.id === id) || null;
+}
+
+/**
+ * Reflect-session memory block for the system prompt. Composed client-side; forwarded by /api/chat.
+ * Free + trial: none — except trialPeakFirstSession (first reflect ever): Deep-tier framing so the model
+ * matches paid Deep presence using onboarding + live conversation only.
+ * Paid: Foundation last 5, Growth last 15, Deep last 30. Uses sessionHistory + savedReflections + moods.
+ */
+function buildReflectMemoryBlock({ tier, isTrialActive, sessionHistory, savedReflections, moodHistory, trialPeakFirstSession }) {
+  if (isTrialActive && !trialPeakFirstSession) return "";
+  const level = trialPeakFirstSession ? TIER_LEVELS.deep : TIER_LEVELS[tier] ?? 0;
+  if (!trialPeakFirstSession && level < TIER_LEVELS.foundation) return "";
+
+  const sessions = Array.isArray(sessionHistory) ? sessionHistory : [];
+  const saved = Array.isArray(savedReflections) ? savedReflections : [];
+  const moods = Array.isArray(moodHistory) ? moodHistory : [];
+
+  const maxN = level >= TIER_LEVELS.deep ? 30 : level >= TIER_LEVELS.growth ? 15 : 5;
+  const window = sessions.slice(0, maxN);
+  if (window.length === 0) {
+    if (trialPeakFirstSession) {
+      const coaching =
+        "No saved sessions yet — treat their onboarding context (name, reasons, goal, patterns, tone) as sacred background. Listen with Deep-tier presence: notice patterns in what they say today, name specifics, hold struggle and hope together. Never mention trials, previews, memory systems, or subscription tiers.";
+      return `\n\n--- SELAH MEMORY (Deep+ · first session) ---\nThere is no prior reflection history on record. Build continuity from what they tell you in this conversation and from IMPORTANT CONTEXT above.\n--- END MEMORY — ${coaching} ---\n`;
+    }
+    return "";
+  }
+
+  const tierLabel =
+    trialPeakFirstSession ? "Deep" : level >= TIER_LEVELS.deep ? "Deep" : level >= TIER_LEVELS.growth ? "Growth" : "Foundation";
+
+  const lines = window.map((s) => {
+    const dateStr = s.date
+      ? new Date(s.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      : "—";
+    const ar = savedReflectionBySessionId(saved, s.id);
+    const mood = moodLabelNearSession(moods, s.date);
+    const cat = s.category || "Reflection";
+    const themes = ar?.keyThemes?.length ? ar.keyThemes.join("; ") : "";
+    const insight = (s.insight || "").replace(/\s+/g, " ").trim().slice(0, 260);
+    const takeaway = (s.takeaway || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    const summary = (ar?.aiSummary || "").replace(/\s+/g, " ").trim().slice(0, 400);
+    const action = (s.action || "").replace(/\s+/g, " ").trim().slice(0, 160);
+    const parts = [`• ${dateStr} — ${cat}`];
+    if (mood) parts.push(`Mood (check-in near this session): ${mood}`);
+    if (themes) parts.push(`Themes: ${themes}`);
+    if (summary) parts.push(`Session archive: ${summary}`);
+    if (insight) parts.push(`Closing insight: ${insight}`);
+    if (takeaway) parts.push(`Takeaway: ${takeaway}`);
+    if (action) parts.push(`They committed to: ${action}`);
+    if (!summary && !insight && !takeaway) parts.push("(Limited card data for this session.)");
+    return parts.join("\n   ");
+  });
+
+  let coaching = "";
+  if (level < TIER_LEVELS.growth) {
+    coaching =
+      "Use these recent themes and moods naturally — brief callbacks, not a file read. Connect when it helps them feel seen.";
+  } else if (level < TIER_LEVELS.deep) {
+    const cats = window.map((s) => s.category).filter(Boolean);
+    const counts = {};
+    cats.forEach((c) => {
+      counts[c] = (counts[c] || 0) + 1;
+    });
+    const top = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([c, n]) => `"${c}" (${n}×)`)
+      .join(", ");
+    const moodLine = window
+      .map((s) => moodLabelNearSession(moods, s.date))
+      .filter(Boolean)
+      .slice(0, 12)
+      .join("; ");
+    coaching = [
+      top && `Recurring topics in this window: ${top}.`,
+      moodLine && `Mood snapshots (when logged near sessions): ${moodLine}.`,
+      "Name emotional patterns when apt — e.g. “I notice work often comes up when you are anxious.” Ground it in their words. Never sound clinical or like you are diagnosing.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  } else {
+    const half = Math.ceil(window.length / 2);
+    const newer = window.slice(0, half);
+    const older = window.slice(half);
+    const pullThemes = (arr) =>
+      arr
+        .map((x) => savedReflectionBySessionId(saved, x.id)?.keyThemes || [])
+        .flat()
+        .filter(Boolean);
+    const nt = pullThemes(newer);
+    const ot = pullThemes(older);
+    const newerFocus = [...new Set(nt)].slice(0, 8).join(", ") || "(see session lines)";
+    const olderFocus = [...new Set(ot)].slice(0, 8).join(", ") || "(see session lines)";
+    coaching = [
+      `Longer arc (${window.length} sessions): more recent stretch tends toward: ${newerFocus}. Earlier in this window: ${olderFocus}.`,
+      "Hold recurring struggles, breakthroughs, relationships or roles they've named, and growth over time. Reference specific past moments in plain language when it serves them — like someone who has walked with them. Never recite this block; never perform memory.",
+    ].join(" ");
+  }
+
+  const header = `--- SELAH MEMORY (${tierLabel}+ · last ${window.length} reflection session${window.length === 1 ? "" : "s"}) ---`;
+  const body = lines.join("\n");
+  const footer = `--- END MEMORY — ${coaching} ---`;
+
+  let block = `${header}\n${body}\n${footer}`;
+  if (block.length > 5200) block = `${block.slice(0, 5200)}\n… (memory trimmed for length)`;
+  return `\n\n${block}\n`;
+}
+
+/** Strip markers / noise for Web Speech API */
+function stripTextForSpeech(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/\bSESSION_COMPLETE\b/gi, "")
+    .replace(/\bPRAYER_COMPLETE\b/gi, "")
+    .replace(/\bCRISIS_DETECTED\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Prefer a warm, calm English voice when the browser exposes one */
+function pickWarmCalmVoice() {
+  if (typeof window === "undefined" || !window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices?.length) return null;
+  const en = voices.filter((v) => /^en/i.test(v.lang || ""));
+  const pool = en.length ? en : voices;
+  const rank = (v) => {
+    const n = (v.name || "").toLowerCase();
+    let s = 0;
+    if (/female|woman|samantha|karen|victoria|serena|moira|fiona|zira|aria|emma|amy|sarah|joanna|jenny|linda|susan|heather|hazel|sonia|google uk english female|microsoft.*female|premium.*en-us/i.test(n)) s += 6;
+    if (/warm|gentle|soft|calm|natural/i.test(n)) s += 4;
+    if ((v.lang || "") === "en-US" || (v.lang || "") === "en-GB") s += 1;
+    if (/male\b|daniel|fred|david|mark|google us english$/i.test(n)) s -= 3;
+    return s;
+  };
+  return [...pool].sort((a, b) => rank(b) - rank(a))[0];
+}
 // Trial users get foundation-level access only (not growth/deep)
 function hasAccess(userTier, requiredTier, isTrialActive) {
   if (new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04") return true;
@@ -272,22 +1171,28 @@ function UpgradeGate({ C, font, feature, requiredTier, onUpgrade }) {
   );
 }
 
+/** Main `screen` ids where the fixed bottom nav is omitted (typing / focus UX). */
+const HIDE_BOTTOM_NAV_SCREENS = new Set([
+  "breathe", "checkin", "bestill", "armorup", "prayerwall", "bench",
+  "reflect", "guidedprayer", "journal", "letters", "heavyday",
+]);
+
 function BottomNav({ screen, setScreen, C, font, adminMode }) {
   const inact = C.textMuted;
   const tabs = [
-    { id:"home",     svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" stroke={a?C.accent:inact} strokeWidth="1.8" fill={a?C.accent+"22":"none"} strokeLinecap="round"/><path d="M9 22V12h6v10" stroke={a?C.accent:inact} strokeWidth="1.8" strokeLinecap="round"/></svg> },
-    { id:"reflect",  svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke={a?C.amber:inact} strokeWidth="1.8" fill={a?C.amber+"18":"none"}/><path d="M12 8v4l3 3" stroke={a?C.amber:inact} strokeWidth="1.8" strokeLinecap="round"/></svg> },
-    { id:"journal",  label:"Notebook", svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 19.5A2.5 2.5 0 016.5 17H20" stroke={a?C.terra:inact} strokeWidth="1.8" strokeLinecap="round"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" stroke={a?C.terra:inact} strokeWidth="1.8" fill={a?C.terra+"18":"none"}/><path d="M9 7h6M9 11h4" stroke={a?C.terra:inact} strokeWidth="1.5" strokeLinecap="round"/></svg> },
-    { id:"progress", svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" stroke={a?C.accent:inact} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-    { id:"settings", svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke={a?C.accent:inact} strokeWidth="1.8"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" stroke={a?C.accent:inact} strokeWidth="1.8"/></svg> },
-    ...(adminMode ? [{ id:"analytics", svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="12" width="4" height="9" rx="1" stroke={a?C.amber:inact} strokeWidth="1.8" fill={a?C.amber+"22":"none"}/><rect x="10" y="7" width="4" height="14" rx="1" stroke={a?C.amber:inact} strokeWidth="1.8" fill={a?C.amber+"22":"none"}/><rect x="17" y="3" width="4" height="18" rx="1" stroke={a?C.amber:inact} strokeWidth="1.8" fill={a?C.amber+"22":"none"}/></svg> }] : []),
+    { id:"home",     navLabel:"Home",     svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" stroke={a?C.accent:inact} strokeWidth="1.8" fill={a?C.accent+"22":"none"} strokeLinecap="round"/><path d="M9 22V12h6v10" stroke={a?C.accent:inact} strokeWidth="1.8" strokeLinecap="round"/></svg> },
+    { id:"reflect",  navLabel:"Reflect",  svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke={a?C.amber:inact} strokeWidth="1.8" fill={a?C.amber+"18":"none"}/><path d="M12 8v4l3 3" stroke={a?C.amber:inact} strokeWidth="1.8" strokeLinecap="round"/></svg> },
+    { id:"guidedprayer", navLabel:"Guided Prayer", svg:(a)=><span style={{ fontSize:"20px", lineHeight:"22px", display:"block", filter:a?"none":"grayscale(0.35)", opacity:a?1:0.65 }}>✦</span> },
+    { id:"progress", navLabel:"Progress", svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" stroke={a?C.accent:inact} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg> },
+    { id:"settings", navLabel:"Settings", svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke={a?C.accent:inact} strokeWidth="1.8"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" stroke={a?C.accent:inact} strokeWidth="1.8"/></svg> },
+    ...(adminMode ? [{ id:"analytics", navLabel:"", svg:(a)=><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="12" width="4" height="9" rx="1" stroke={a?C.amber:inact} strokeWidth="1.8" fill={a?C.amber+"22":"none"}/><rect x="10" y="7" width="4" height="14" rx="1" stroke={a?C.amber:inact} strokeWidth="1.8" fill={a?C.amber+"22":"none"}/><rect x="17" y="3" width="4" height="18" rx="1" stroke={a?C.amber:inact} strokeWidth="1.8" fill={a?C.amber+"22":"none"}/></svg> }] : []),
   ];
   return (
     <div style={{ position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",
       width:"100%",maxWidth:"520px",background:C.navBg,
       borderTop:`1px solid ${C.border}`,
-      display:"flex",justifyContent:"space-around",alignItems:"center",
-      padding:"10px 0 22px",zIndex:100,
+      display:"flex",justifyContent:"space-around",alignItems:"flex-end",
+      padding:"8px 0 18px",zIndex:100,
       boxShadow:`0 -1px 0 ${C.border}, 0 -4px 20px rgba(0,0,0,0.08)` }}>
       {tabs.map(t => {
         const a = screen===t.id;
@@ -295,11 +1200,17 @@ function BottomNav({ screen, setScreen, C, font, adminMode }) {
           <button key={t.id} onClick={()=>setScreen(t.id)} style={{
             background:"none",border:"none",cursor:"pointer",
             display:"flex",flexDirection:"column",alignItems:"center",
-            padding:"4px 16px",transition:"transform 0.2s ease",
+            padding:"4px 6px",transition:"transform 0.2s ease",maxWidth:t.id==="guidedprayer"?"78px":"64px",
             transform: a?"translateY(-1px)":"translateY(0)" }}>
             {t.svg(a)}
+            {t.navLabel ? (
+              <span style={{ fontFamily:font, fontSize:t.id==="guidedprayer"?"6.5px":"7px", letterSpacing:t.id==="guidedprayer"?"0.3px":"0.5px",
+                color:a?C.accent:C.textMuted, fontStyle:"italic", marginTop:"4px", textAlign:"center", lineHeight:1.15 }}>
+                {t.navLabel}
+              </span>
+            ) : null}
             <div style={{ width:"4px",height:"4px",borderRadius:"50%",
-              background:a?C.accent:"transparent",marginTop:"4px",
+              background:a?C.accent:"transparent",marginTop:"3px",
               transition:"all 0.2s ease" }}/>
           </button>
         );
@@ -583,8 +1494,12 @@ function LandingPage({ onEnter, C, font }) {
           <p style={{ color:"#B0A790", fontSize:"10px", letterSpacing:"4px",
             textTransform:"uppercase", fontStyle:"italic", margin:"16px 0 12px" }}>From the Founder</p>
           <p style={{ color:"#6B6B66", fontSize:"15px", fontStyle:"italic",
+            lineHeight:"2", margin:"0 0 12px" }}>
+            I'm not a preacher. I'm not perfect. I built Selah because I know what it feels like to be desperate and not know where to turn — and I know that God is the only one who never runs out of answers.
+          </p>
+          <p style={{ color:"#6B6B66", fontSize:"14px", fontStyle:"italic",
             lineHeight:"2", margin:"0 0 8px" }}>
-            "I built Selah for the version of myself that had no one to talk to. For years I carried things I couldn't say out loud — not because I didn't want help, but because I didn't feel safe enough to ask for it."
+            This app isn't about religion. It's about that moment when everything else fails and you need somewhere real to go.
           </p>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"8px", margin:"16px 0" }}>
             <div style={{ width:"20px", height:"1px", background:"#8FA38A", opacity:0.5 }}/>
@@ -693,7 +1608,7 @@ function QuickCheckIn({ C, font, onClose, onboardingAnswers, faithLevel, userNam
       setReflection(d.content.map(b=>b.text||"").join("").trim());
     } catch {
       setReflection("You paused. You checked in with yourself. That matters more than you think. Carry that awareness into whatever comes next.");
-    } finally { setLoading(false); setDone(true); if(onActive) onActive(); try{const c=parseInt(localStorage.getItem("selah_checkin_count")||"0");localStorage.setItem("selah_checkin_count",String(c+1));}catch(e){} }
+    } finally { setLoading(false); setDone(true); if(onActive) onActive(); try{const c=parseInt(localStorage.getItem("selah_checkin_count")||"0");localStorage.setItem("selah_checkin_count",String(c+1));}catch(e){} try { markMissionTask(6); } catch (e) {} }
   };
 
   if (done) return (
@@ -1549,10 +2464,28 @@ function FirstTimeWelcome({ C, font, userName, onboardingAnswers, onReflect, onE
         </h1>
 
         <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic",
-          lineHeight:"1.9", margin:"0 0 32px",
+          lineHeight:"1.9", margin:"0 0 24px",
           animation:"fadeUp 0.7s ease 0.5s both" }}>
           {heaviestLine}
         </p>
+
+        <div style={{
+          marginBottom:"28px", padding:"14px 16px",
+          borderLeft:`3px solid ${C.sage}44`,
+          background:`${C.sage}0A`,
+          borderRadius:"0 10px 10px 0",
+          textAlign:"left",
+          animation:"fadeUp 0.7s ease 0.55s both"
+        }}>
+          <p style={{ color:C.amber, fontSize:"9px", letterSpacing:"2px",
+            textTransform:"uppercase", fontStyle:"italic", margin:"0 0 10px" }}>
+            A note from the founder
+          </p>
+          <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
+            lineHeight:"1.85", margin:0 }}>
+            I'm not a preacher. I'm not perfect. I built Selah because I know what it feels like to be desperate and not know where to turn — and I know that God is the only one who never runs out of answers. This app isn't about religion. It's about that moment when everything else fails and you need somewhere real to go.
+          </p>
+        </div>
 
         {/* The two choices */}
         <div style={{ display:"flex", flexDirection:"column", gap:"10px",
@@ -1606,6 +2539,7 @@ function FirstTimeWelcome({ C, font, userName, onboardingAnswers, onReflect, onE
 function OnboardingScreen({ onDone, C, font }) {
   const [step,setStep]=useState(0);
   const [answers,setAnswers]=useState({});
+  const [pauseTimeCustom, setPauseTimeCustom]=useState(false);
   const allQuestions=[
     { id:"name", q:"First — what should Selah call you?", type:"word",
       placeholder:"Your first name or whatever feels right..." },
@@ -1630,6 +2564,7 @@ function OnboardingScreen({ onDone, C, font }) {
       opts:["Judged or analyzed","Preached at","Pressured to be positive","Like just another therapy app","Weak for being here"] },
     { id:"goal", q:"Last one — complete this sentence: \"I want to become someone who...\"", type:"word",
       placeholder:"...is at peace. ...shows up. ...trusts himself. ...doesn't give up." },
+    { id:"pauseTime", q:"When would you like to pause with Selah?", type:"pauseTime" },
   ];
 
   // Filter questions based on age
@@ -1647,7 +2582,9 @@ function OnboardingScreen({ onDone, C, font }) {
   const q=questions[step];
   if(!q) return null;
   const ans=answers[q.id];
-  const canNext = q.type==="multi"?(ans&&ans.length>0):q.type==="word"?(ans&&ans.trim()):q.type==="parentConsent"?(consentMethod==="email"?(answers.parentEmail&&answers.parentEmail.includes("@")&&answers.parentEmail.includes(".")):(answers.parentPhone&&answers.parentPhone.replace(/\D/g,"").length>=10)):!!ans;
+  const canNext = q.type==="pauseTime"
+    ? !!answers.pauseTime && String(answers.pauseTime).trim() !== ""
+    : q.type==="multi"?(ans&&ans.length>0):q.type==="word"?(ans&&ans.trim()):q.type==="parentConsent"?(consentMethod==="email"?(answers.parentEmail&&answers.parentEmail.includes("@")&&answers.parentEmail.includes(".")):(answers.parentPhone&&answers.parentPhone.replace(/\D/g,"").length>=10)):!!ans;
 
   const select=(val)=>{
     if(q.type==="multi"){
@@ -1803,6 +2740,71 @@ function OnboardingScreen({ onDone, C, font }) {
               borderRadius:"8px",padding:"14px 16px",color:C.textPrimary,
               fontSize:"14px",fontStyle:"italic",fontFamily:font,
               outline:"none",marginBottom:"28px",transition:"border-color 0.2s ease" }}/>
+        )}
+
+        {q.type==="pauseTime"&&(
+          <div style={{ marginBottom:"28px" }}>
+            {[
+              { label:"Morning (7am)", value:"7" },
+              { label:"Midday (12pm)", value:"12" },
+              { label:"Evening (7pm)", value:"19" },
+              { label:"Night (9pm)", value:"21" },
+            ].map((opt)=>{
+              const sel=answers.pauseTime===opt.value && !pauseTimeCustom;
+              return (
+                <button key={opt.value} type="button" onClick={()=>{
+                  setPauseTimeCustom(false);
+                  setAnswers(a=>({...a,pauseTime:opt.value}));
+                }} style={{
+                  width:"100%",marginBottom:"8px",
+                  background:sel?`${C.accent}18`:C.bgSecondary,
+                  border:`1.5px solid ${sel?C.accent+"66":"transparent"}`,
+                  borderRadius:"8px",padding:"14px 18px",cursor:"pointer",
+                  textAlign:"left",color:sel?C.accent:C.textSoft,
+                  fontSize:"13px",fontStyle:"italic",fontFamily:font,
+                  transition:"all 0.2s ease",
+                  fontWeight:sel?"bold":"normal" }}>
+                  {sel?"✓  ":""}{opt.label}
+                </button>
+              );
+            })}
+            <button type="button" onClick={()=>{ setPauseTimeCustom(true); setAnswers(a=>({...a,pauseTime:""})); }}
+              style={{
+                width:"100%",marginBottom:"12px",
+                background:pauseTimeCustom?`${C.accent}18`:C.bgSecondary,
+                border:`1.5px solid ${pauseTimeCustom?C.accent+"66":"transparent"}`,
+                borderRadius:"8px",padding:"14px 18px",cursor:"pointer",
+                textAlign:"left",color:pauseTimeCustom?C.accent:C.textSoft,
+                fontSize:"13px",fontStyle:"italic",fontFamily:font,
+                transition:"all 0.2s ease" }}>
+              {pauseTimeCustom?"✓  ":""}Custom time
+            </button>
+            {pauseTimeCustom && (
+              <div style={{ background:C.bgSecondary,borderRadius:"8px",padding:"14px 16px",border:`1px solid ${C.border}` }}>
+                <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",margin:"0 0 10px",lineHeight:1.6 }}>
+                  Hour on a 24-hour clock (0 = midnight, 12 = noon, 19 = 7pm).
+                </p>
+                <input type="number" min={0} max={23} step={1}
+                  value={answers.pauseTime === "" || answers.pauseTime == null ? "" : answers.pauseTime}
+                  onChange={(e)=>{
+                    const raw=e.target.value;
+                    if(raw===""){ setAnswers(a=>({...a,pauseTime:""})); return; }
+                    const n=parseInt(raw,10);
+                    if(Number.isNaN(n)) return;
+                    const clamped=Math.max(0,Math.min(23,n));
+                    setAnswers(a=>({...a,pauseTime:String(clamped)}));
+                  }}
+                  placeholder="e.g. 8"
+                  style={{ width:"100%",boxSizing:"border-box",background:C.bgPrimary,
+                    border:`1.5px solid ${answers.pauseTime?C.accent+"55":"transparent"}`,
+                    borderRadius:"8px",padding:"12px 14px",color:C.textPrimary,
+                    fontSize:"14px",fontFamily:font,outline:"none" }}/>
+              </div>
+            )}
+            <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",margin:"12px 0 0",lineHeight:1.7 }}>
+              We’ll use this for your daily verse reminder once you enable notifications in Settings.
+            </p>
+          </div>
         )}
 
         {q.type==="parentConsent"&&(
@@ -1971,7 +2973,7 @@ function LateNightModal({ onEnter, onDismiss, C, font }) {
 // ═══════════════════════════════════════════════════════
 // BREATHING EXERCISE
 // ═══════════════════════════════════════════════════════
-function BreathingExercise({ C, font, onClose }) {
+function BreathingExercise({ C, font, onClose, onSessionComplete }) {
   const [phase, setPhase] = useState("ready"); // ready | inhale | hold | exhale | holdOut | done
   const [cycle, setCycle] = useState(0);
   const [totalCycles] = useState(4);
@@ -2193,7 +3195,7 @@ function BreathingExercise({ C, font, onClose }) {
                 padding:"14px 24px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>
                 Breathe Again
               </button>
-              <button onClick={onClose} style={{ background:C.sage, border:"none",
+              <button onClick={()=>{ if (onSessionComplete) onSessionComplete(); onClose(); }} style={{ background:C.sage, border:"none",
                 borderRadius:"3px", color:"#fff", fontSize:"10px", letterSpacing:"3px",
                 textTransform:"uppercase", padding:"14px 28px", cursor:"pointer",
                 fontFamily:font, fontStyle:"italic" }}>
@@ -3761,7 +4763,7 @@ function ResetPatternRecall({ C, font, onBack }) {
 // ═══════════════════════════════════════════════════════
 // BIBLE STORIES — Faith-Rooted Story Experience
 // ═══════════════════════════════════════════════════════
-function BibleStoriesScreen({ C, font, setScreen, faithLevel }) {
+function BibleStoriesScreen({ C, font, setScreen, faithLevel, tier, isTrialActive }) {
   const [activeStory, setActiveStory] = useState(null);
   const [chapterIdx, setChapterIdx] = useState(0);
 
@@ -4366,6 +5368,306 @@ function BibleStoriesScreen({ C, font, setScreen, faithLevel }) {
         { title:"Why This Matters to You", text:"Isaiah's story isn't about trying harder or believing more. It's about an encounter that changed everything — seeing God as He actually is and being wrecked by the distance between His holiness and your reality. But the wrecking isn't the end. It's the beginning. Because after the ruin comes the coal. After the coal comes the voice. After the voice comes the mission. If you've been feeling undone lately — exposed, inadequate, too broken for purpose — that might not be a sign that something is wrong. It might be a sign that you're closer to the throne room than you've ever been. Let yourself be undone. Let the fire touch your lips. And when you hear the question — who will go? — you'll be ready to answer." },
       ]
     },
+    {
+      id:"mary-magdalene", title:"Mary Magdalene", icon:"🌅", tag:"From Torment to First Witness",
+      color:"#B86A8C",
+      summary:"Seven spirits driven out. Money and presence at the cross when almost everyone else fled. First to the empty tomb, first to tell the others. Mary Magdalene's story is for anyone who has been written off — and who keeps showing up anyway.",
+      chapters:[
+        { title:"What Had Hold of Her", text:"The Gospels don't give us a neat diagnosis — just that Jesus cast seven demons out of her. Whatever that was, it owned her body and her days until it didn't. She didn't earn her healing by behaving first. She received it where she stood. This chapter refuses to romanticize pain: some of us are fighting things we can't fully explain, and still have to get through ordinary life. Where in your life does it feel like something has been calling the shots — and what would it mean if that grip actually broke?" },
+        { title:"She Paid the Bills", text:"Luke names her with other women who supported Jesus' ministry from their own means. She wasn't a spectator. She funded the road trip. In a world that often treats women as scenery, she had resources, agency, and a seat at the center of the story. This chapter asks what you do with whatever money, time, or influence you actually have — not performative generosity, but the unglamorous cost of sticking with someone when the crowd thins. Who are you investing in when there's nothing flashy left to gain?" },
+        { title:"At the Cross When It Cost", text:"When Jesus was crucified, Mary Magdalene stayed close. Not safe. Not dignified. Close. She watched the slow public death of the person who had remade her life. Faith isn't always a mountaintop — sometimes it's standing in the horror because leaving would feel like betrayal. When have you stayed present for someone in pain even though every instinct said look away or run?" },
+        { title:"The Empty Tomb", text:"She came to the grave while it was still dark. Grief had a schedule; she kept it. The stone was moved, the body gone — and her first thought wasn't theology. It was panic and tears. She mistook the risen Jesus for the gardener until He said her name. This chapter is about how clarity often arrives after confusion, through a voice that knows you personally. What grief or question are you carrying to a tomb this week — and what would it take for you to hear your name in the middle of it?" },
+        { title:"Why This Matters to You", text:"Mary was sent to tell the men, 'I have seen the Lord.' The first Christian sermon in John's account comes from a woman the culture could have dismissed. Her past didn't disqualify her witness; it sharpened it. You don't need a polished résumé to speak truthfully about what you've seen God do — you need honesty. So here is the question: what have you seen — mercy, presence, a door opening — that you're still afraid to say out loud because someone might not believe you?" },
+      ]
+    },
+    {
+      id:"abraham-covenant", title:"Abraham: The Long Road", icon:"🛤️", tag:"Leaving the Life You Planned",
+      color:"#C4945A",
+      summary:"Leave your country. Your people. Your father's house. Abraham didn't get a map — he got a promise that would take decades to look like anything. This story is for anyone mid-journey, wondering if the delay means God changed His mind.",
+      chapters:[
+        { title:"Go Without the Spreadsheet", text:"The call wasn't 'when you're ready' or 'when you have certainty.' It was: go. Abraham left Ur with Sarah and Lot and accumulated stuff — not as a minimalist poster child, but as a real person dragging habits and family into an unknown. This chapter names the awkward truth: obedience rarely feels clean. What part of your life are you still trying to organize perfectly before you'll move — and what is that delay costing you?" },
+        { title:"When Family Complicates Everything", text:"Lot went with him. Later their households couldn't share land without conflict. Abraham let Lot choose first — generous on the surface, conflict-avoidant underneath — and Lot moved toward Sodom. Family can be the hardest place to keep integrity; love and fear get tangled. Where are you smoothing things over with 'peace' that is really just postponing a hard truth?" },
+        { title:"The Egypt Lie", text:"Famine hit. Abraham went to Egypt and asked Sarah to say she was his sister — because he was afraid he'd be killed for her. She was taken into Pharaoh's house, and Abraham profited from it until God intervened. Heroes in Scripture get exposed. This chapter refuses to skip the cowardice: fear makes us sacrifice other people's safety to protect our own skin. Who pays the price when you choose the safer story instead of the honest one?" },
+        { title:"The Promise That Outlasts Impatience", text:"Years passed. Still no child. Sarah gave Abraham her servant Hagar — a plan that created pain for everyone involved. The promise didn't come through human scheming; it came through God showing up in the mess they made. This chapter sits with impatience: the way a good desire curdles when we try to force the timeline. What shortcut are you tempted to call 'faith' — and who gets hurt when you take it?" },
+        { title:"Why This Matters to You", text:"Abraham's story isn't a straight line from call to payoff. It's wandering, failure, laughter at impossible news, and still — covenant. God tied Himself to an imperfect man and kept showing up. If your life looks more like a series of detours than a highlight reel, that doesn't automatically mean you're off-course. Here is the question: can you trust a slow promise enough to stay honest while you wait — or are you rearranging other people's lives to make the wait feel shorter?" },
+      ]
+    },
+    {
+      id:"gideon-after", title:"Gideon: After the Victory", icon:"⚱️", tag:"When Winning Still Warps You",
+      color:"#D47848",
+      summary:"The battle with Midian was over — but Gideon's story didn't end in triumph only. Gold became an ephod that snared a nation. This is for anyone who discovered that the hardest part isn't the fight; it's what you build when adrenaline fades.",
+      chapters:[
+        { title:"The Aftermath High", text:"Israel wanted Gideon to be king. He said no — but he collected gold and made an ephod, and the text says all Israel prostituted themselves to it. Sometimes we refuse a crown but still build something people worship. What have you created — a reputation, a role, a relationship — that quietly started receiving the devotion only God should get?" },
+        { title:"The Ephod in Ophrah", text:"He set it up in his hometown. It became a spiritual trap — not because gold is evil, but because misplaced worship always shrinks the soul. Private trophies have public consequences. Where have you enshrined a coping mechanism, a success story, or an old identity God already asked you to lay down?" },
+        { title:"Seventy Sons, One Disaster Waiting", text:"Gideon's household multiplied into power. One of those threads became Abimelech — a son who slaughtered his brothers to seize rule. Parents don't always see which child will turn pain into violence. This chapter doesn't blame every parent for adult choices — it asks a harder thing: what unhealed hunger for control gets passed down when strength never becomes humility? What pattern in your family tree are you honest about — or still denying?" },
+        { title:"The Peace That Didn't Last", text:"The land had rest — for a while. Then 'as soon as Gideon died, the Israelites turned again' to other gods. One leader's faithfulness doesn't permanently fix a people's hearts. That's both humbling and freeing: you're not responsible for fixing everyone. But you are responsible for your own integrity while you have breath. Where are you expecting your leadership, your love, or your discipline to do what only God can do in someone's soul?" },
+        { title:"Why This Matters to You", text:"Gideon began hiding in a winepress and ended with a nation stumbling over his memorial. Courage and confusion can live in the same life. Winning doesn't automatically make you wise. So ask yourself: after your last big win or survival — what did you build with the gold — gratitude, generosity, domination, or a shrine — and is it helping anyone actually know God, or just remember you?" },
+      ]
+    },
+    {
+      id:"hannah-long-road", title:"Hannah: The Years After the Answer", icon:"🧵", tag:"Longing Doesn't Vanish Overnight",
+      color:"#8B6BB8",
+      summary:"She prayed for a son — and received one. Then she brought him to the temple and walked away without him. Hannah's story keeps going after the miracle: yearly trips, another woman's provocation still in the house, faith measured in small obediences. For anyone learning to live with an answered prayer that still hurts.",
+      chapters:[
+        { title:"The Robe Every Year", text:"Year after year she made Samuel a little robe and brought it when she went up for the feast. Love kept showing up in fabric and miles — not dramatic moments, but faithfulness with a hole in the home where a child should be. What does love look like for you when the miracle doesn't remove every ache — when obedience means showing up again with something small in your hands?" },
+        { title:"The House Didn't Get Perfect", text:"Elkanah still had another wife. Peninnah's presence didn't magically disappear from the emotional map. You can receive a gift from God and still live beside the person who once made you feel worthless. How are you navigating relationships that remind you of who you used to be — or who you feared you'd never become?" },
+        { title:"Eli's Decline in the Background", text:"While Hannah's son grew up serving God, Eli's own sons were corrupt — and Eli didn't stop them. Sometimes the faithful parent isn't the famous one in the story. Sometimes your child walks toward integrity while someone else's legacy rots in public view. Where are you tempted to compare your hidden faithfulness to someone else's visible failure or success?" },
+        { title:"Her Song in the Noise", text:"Hannah's prayer bursts with reversal language: bows broken, the hungry filled, the barren bearing children. She wasn't pretending pain never happened; she was naming God as the one who bends history toward justice. When did you last let your mouth say — out loud — that God is good without editing out the parts of your story that still sting?" },
+        { title:"Why This Matters to You", text:"An answered prayer didn't erase Hannah's complexity: love, sacrifice, yearly ache, and worship intertwined. Faith isn't a single peak — it's a road. If you got something you begged for and still feel hollow some days, that doesn't mean you're ungrateful. It means you're human. What part of your 'answered prayer' life still needs God — not as a genie who finished the job, but as a Father who stays when the feelings don't?" },
+      ]
+    },
+    {
+      id:"jonah-east", title:"Jonah: East of the City", icon:"🌿", tag:"Angry at Mercy",
+      color:"#4A7AB8",
+      summary:"Nineveh repented — and Jonah went east, built a shelter, and nursed a grudge in the heat. God grew a plant, sent a worm, and asked a question Jonah never answered. For anyone furious that God is kinder than feels fair.",
+      chapters:[
+        { title:"Success You Hate", text:"Jonah's sermon worked beyond anyone's dreams. He should have been thrilled. He was miserable. Sometimes our bitterness isn't about failure — it's about God blessing people we wanted punished. Who would you rather see fail than flourish — and what does that say about what you trust for your own worth?" },
+        { title:"The Booth of Self-Righteousness", text:"He made a shelter east of Nineveh and waited to see what would become of the city — as if he could watch from a safe distance while God worked mercy in a place Jonah despised. We build little outlook posts over other people's lives: social media, gossip, judgment. Where do you go to watch people — hoping they'll get what you think they deserve?" },
+        { title:"The Plant and the Worm", text:"God caused a leafy plant to shade Jonah — and then sent a worm to destroy it overnight. Jonah wanted to die over a dead plant. God pointed at 120,000 humans. Our compassion can be wildly out of scale: we mourn our comfort and shrug at someone else's soul. What small comfort are you grieving like it's ultimate — while staying numb to a bigger hurt nearby?" },
+        { title:"The Question That Hangs", text:"'Should I not have concern for this great city?' God asks. The book ends there — no tidy resolution, no repentance verse from Jonah. Scripture leaves room for the reader to squirm. This chapter asks whether you want closure more than you want conversion. Are you willing for God to love people you don't — and to let that love rearrange your anger?" },
+        { title:"Why This Matters to You", text:"Jonah's story isn't a lesson about missions only — it's a mirror. You know what it's like to want justice that tastes like revenge, to call it 'righteousness' when it's really control. Mercy offends everyone who keeps score — including you, when you're the one needing it. So: who are you refusing to see as fully human because forgiving them would cost you your favorite story about yourself?" },
+      ]
+    },
+    {
+      id:"solomon", title:"Solomon", icon:"👑", tag:"Wisdom That Couldn't Save Him",
+      color:"#D4AF37",
+      summary:"Asked for wisdom, got it — and still drowned the kingdom in excess, alliances, and divided hearts. Solomon's arc is for anyone who knows what they should do and still reaches for what glittered.",
+      chapters:[
+        { title:"The Weight He Didn't Choose", text:"David died leaving a throne soaked in blood and unfinished business. Solomon inherited power before he had scars enough to wear it wisely — and God appeared with an open offer: ask. He asked for a listening heart to govern. That was real humility — for a moment. Where has responsibility landed on you before you were ready — and what did you actually request from God when the floor opened under your feet?" },
+        { title:"Wisdom on Display", text:"People traveled to hear him. His judgments cut through lies. Israel looked strong, rich, ordered — the Instagram version of a kingdom. Public brilliance can hide private drift. When everyone applauds your decisions, who in your life is allowed to say, 'You're changing — and not in a good way'?" },
+        { title:"The Alliances", text:"He married into treaties — hundreds of wives, concubines, political beds that pulled his heart toward other altars. Love and lust and strategy blurred until loyalty to God felt optional. This chapter names the slow compromise: each 'small' concession that made the next one easier. What relationship, deal, or habit are you defending as 'practical' while it quietly reshapes what you worship?" },
+        { title:"The Temple and the Cracks", text:"He built a house for God — magnificent — yet his heart didn't stay aligned. Ritual outgrew relationship. You can construct something beautiful for God with your hands while your attention wanders elsewhere. What spiritual project are you proud of that has become a substitute for honesty with God?" },
+        { title:"Why This Matters to You", text:"Solomon's story doesn't end as a pure tragedy — Scripture wrestles with his legacy — but it's a warning carved in gold: gifts without character become weapons. Intelligence isn't integrity. Success isn't soul-health. If you could have anything, what are you asking for — and if God granted it, would you still choose Him when the glitter asked you to trade?" },
+      ]
+    },
+    {
+      id:"john-baptist", title:"John the Baptist", icon:"🌊", tag:"Voice in the Wilderness",
+      color:"#6B9E7A",
+      summary:"Rough clothes, wild food, a river full of repentant people — and a courage that spoke truth to a king's face. Then prison, doubt, and a beheading at a party trick. John's story is for anyone who thought faith would feel clearer once they obeyed.",
+      chapters:[
+        { title:"The Voice Before the Spotlight", text:"John showed up in the desert calling people to honesty — not performance. He wasn't polishing a brand; he was clearing ground. The famous one would come later; John was the opening act who knew his place. Where are you tempted to grab credit, platform, or centrality — and what would it cost you to be faithful in obscurity?" },
+        { title:"Lowering Someone Else's Sandals", text:"He baptized the One he wasn't worthy to serve — humility that wasn't fake modesty. He meant it. This chapter asks what happens to your ego when someone you helped outgrows you in public. Can you rejoice when the story stops being about you — or does that feel like death?" },
+        { title:"Herod's Guilty Fascination", text:"John named Herod's marriage for what it was. Truth bought him a cell — not because God abandoned him, but because power hates being named. Speaking plainly has consequences. Where would telling the truth cost you comfort, income, or belonging — and are you still willing to say it?" },
+        { title:"Doubt Behind Bars", text:"From prison John sent messengers to Jesus: Are You the one, or should we wait for someone else? Faith doesn't always feel certain — even for prophets. Jesus answered with evidence: blind see, lame walk, dead live. This chapter honors questions asked from pain, not cynicism. What are you asking God from your own prison — and are you listening for an answer that might not match your script?" },
+        { title:"Why This Matters to You", text:"John's head ended on a platter at a girl's dance and a king's cowardice. The story doesn't wrap that in a bow. Faithful people still get crushed by systems — sometimes publicly, senselessly. So the question isn't whether obedience guarantees ease. It's this: if your courage only holds when you're admired, what kind of faith is that — and what would it look like to stay true when the crowd that cheered you is gone?" },
+      ]
+    },
+    {
+      id:"stephen-seed", title:"Stephen: Blood on the Stones", icon:"🩸", tag:"Forgiveness at the Cost",
+      color:"#A85C5C",
+      summary:"Chosen to serve food, killed for speaking truth — Stephen's death is brutal, public, and woven into the birth of the church. This is for anyone who wonders whether faithfulness matters when the outcome looks like loss.",
+      chapters:[
+        { title:"From Tables to Trial", text:"He was known first for practical care — making sure widows weren't overlooked. The same community that needed his service later dragged him to court. Service doesn't immunize you to slander; sometimes it makes you a target when power feels exposed. Where are you serving faithfully while knowing people might still turn on you?" },
+        { title:"Lies as a Weapon", text:"Opponents stirred up witnesses who twisted his words. When truth threatens a system, the system often answers with stories. This chapter names the loneliness of being misrepresented. Who is telling a version of you that you can't recognize — and how are you responding without becoming the thing they accuse you of?" },
+        { title:"The Long Reminder", text:"Stephen rehearsed Israel's history — not to bore the room, but to show a pattern: God's messengers rejected, again and again. He wasn't rambling; he was exposing the council's continuity with the past they claimed to honor. What story from your own life keeps repeating until you finally name the pattern out loud?" },
+        { title:"Heaven Open, Knees in the Dirt", text:"He saw Jesus standing — and forgave the people killing him. Forgiveness at that moment wasn't a polite habit; it was a miracle. This chapter refuses to cheapen it: most of us can't imagine that kind of grace under that kind of pain. Who are you still holding a rock for — and what would it take to drop it without pretending the wound wasn't real?" },
+        { title:"Why This Matters to You", text:"Saul approved. Stephen died. Years later Saul carried the gospel across the world. You rarely see the full harvest of your obedience — especially the costly kind. So ask yourself: what are you doing only because you can measure the outcome — and what might God be asking of you that looks like loss on every spreadsheet you trust?" },
+      ]
+    },
+    {
+      id:"hagar-genesis21", title:"Hagar: Cast Out Again", icon:"💧", tag:"Surviving What Love Threw Away",
+      color:"#A68F60",
+      summary:"Sarah sent Hagar away with Ishmael — bread, water, and a wound that reopened. This story is for anyone left on the edge of the wilderness with a child depending on them and a skin of water that won't last.",
+      chapters:[
+        { title:"The Order to Leave", text:"Sarah saw Ishmael laughing — and demanded they go. Abraham was distressed, but God told him to listen to Sarah. Politics in a tent; power deciding who belongs. Hagar didn't get a vote. This chapter sits with the injustice of being expelled for someone else's insecurity. When have you been pushed out of a place you helped build — and who got to call it 'God's will'?" },
+        { title:"The Skin of Water", text:"She wandered in Beersheba. The water ran out. She put Ishmael under a bush and walked far enough not to watch him die — a mother's unbearable math. Despair isn't always dramatic; sometimes it's practical: I can't fix this; I can only distance myself from the sight of failure. What situation in your life has pushed you to that kind of distance — and what would real help look like?" },
+        { title:"God Heard the Boy", text:"The text says God heard the voice of the boy — not only Hagar's. Mercy showed up for the child caught in adult decisions. This chapter refuses to make the child invisible. Who in your world is paying for choices they didn't make — and are you willing to see their cry as loud as yours?" },
+        { title:"The Well", text:"God opened her eyes; she saw a well. What was there all along became visible when hope shifted. Sometimes provision is less about new resources and more about sight. What resource, relationship, or option might already be in reach if you stopped staring only at what's empty?" },
+        { title:"Why This Matters to You", text:"God stayed with Hagar's story — a promise for Ishmael, a future neither of them could manufacture. Being discarded didn't erase their dignity. If you've been cast out — of family, church, marriage, work — the question isn't whether the pain is real. It is. The question is: can you let God see you in the place they left you — not to pretend it didn't hurt, but to find water for the next step you have to take?" },
+      ]
+    },
+    {
+      id:"deborah", title:"Deborah", icon:"⚖️", tag:"Judgment Under a Tree",
+      color:"#5A8FA8",
+      summary:"She held court beneath a palm tree — prophet and judge in a violent time. When battle came, she went with the army she had summoned. Deborah's story is for anyone leading while outnumbered, unheard, or tired of waiting for someone else to move.",
+      chapters:[
+        { title:"Justice in the Open", text:"People came to her under a tree — public, visible, slow enough for truth to be spoken. Leadership wasn't a stage show; it was settling disputes where neighbors could see fairness attempted. Where is your life missing that kind of honest forum — and are you avoiding conflict that needs naming?" },
+        { title:"The General Who Hesitated", text:"Deborah told Barak to go; he wouldn't without her. She went — and said honor would shift because of it: a woman would get credit another man expected. Sometimes courage pairs with someone else's fear. Where are you carrying a mission because the person who should lead won't step up — and what does that cost you?" },
+        { title:"The River and the Chariots", text:"Sisera's iron chariots dominated the plain — until weather and terrain turned advantage into trap. The battle belongs to more than muscle; it belongs to timing, terrain, and forces you can't manufacture. What problem are you trying to solve with brute force when the situation needs patience or strategy — or simply waiting for the right moment?" },
+        { title:"The Tent Peg", text:"Violence closes in a woman's hands in a private, ugly scene — Scripture doesn't sanitize it. War dehumanizes everyone it touches. This chapter doesn't celebrate cruelty; it refuses to look away from what conflict actually does to bodies and souls. What anger in you wants a quick, total end to an enemy — and what would happen to your heart if you got it?" },
+        { title:"Why This Matters to You", text:"The land had rest for decades — not because Deborah was flawless, but because she spoke, acted, and went where fear wanted her to stay home. Leadership isn't only inspiration; it's showing up when the cost is real. So: what truth are you sitting on — about your family, your workplace, your community — because speaking it would make you visible in a way that frightens you?" },
+      ]
+    },
+    {
+      id:"elisha-shunem", title:"Elisha: Oil and Fire", icon:"🫖", tag:"When the Ordinary Becomes Holy",
+      color:"#6B8E9E",
+      summary:"Oil that wouldn't stop. A borrowed axe that floated. A Syrian general healed in a muddy river. Elisha picked up Elijah's mantle and walked into messy, specific needs — not spectacle for its own sake. For anyone asked to show up with power in boring rooms.",
+      chapters:[
+        { title:"The Mantle That Wasn't Theatrics", text:"Elijah left — and Elisha tore his own clothes and took the mantle that had parted water. He didn't audition for the role; he refused to leave until he inherited the burden. This chapter is about the difference between wanting a platform and accepting a calling that will cost you the version of yourself that likes being comfortable. What are you chasing — influence — or the willingness to be the person who stays when everyone else moves on?" },
+        { title:"The Oil That Multiplied", text:"A widow faced creditors who would take her sons. Elisha told her to borrow jars — empty ones, not a few — and pour oil from what little she had until every container was full. The miracle wasn't magic; it was obedience in a kitchen-level crisis. Where is your 'almost nothing' that God keeps asking you to pour out anyway — and what jars are you still refusing to gather?" },
+        { title:"The General in the River", text:"Naaman arrived furious that healing required a muddy river, not a dramatic gesture from the prophet. His pride almost cost him his skin. Healing sometimes shows up as humiliation: do the small, muddy thing you don't think should count. What cure are you resisting because the instructions offend your sense of how important you are?" },
+        { title:"Gehazi's Price Tag", text:"Elisha's servant ran after Naaman for silver and clothes — secretly, as if God wouldn't notice. Leprosy clung to Gehazi like a lesson: shortcuts to comfort corrode you. This chapter isn't pretty: the people closest to power can be the first to sell it. Where are you trading integrity for cash, approval, or a secret win?" },
+        { title:"Why This Matters to You", text:"Elisha's ministry wasn't a highlight reel — it was rivers, kitchens, creditors, and angry men with skin diseases. God kept meeting people in the unglamorous middle of their disasters. You don't need a perfect stage; you need honesty about what you actually have in the house. So: what practical, unimpressive step have you been avoiding because it doesn't look spiritual enough — and what if that step is exactly where the oil starts?" },
+      ]
+    },
+    {
+      id:"samson-denouement", title:"Samson: Blinded", icon:"🕯️", tag:"Strength After You've Lost It",
+      color:"#8B7355",
+      summary:"Delilah asked until he broke. The Philistines gouged out his eyes and chained him to grind grain — but his hair grew back in the dark. This is for anyone who handed their power to the wrong person and wonders if the story is over.",
+      chapters:[
+        { title:"The Game He Thought He Could Win", text:"Samson treated danger like flirtation — Delilah pressed, he lied, she tried, repeat — until emotional exhaustion and arrogance drained his caution. This chapter names the pattern: the person who keeps walking back into the same trap because adrenaline feels like love. Who keeps asking you to prove something — and what part of you keeps answering?" },
+        { title:"The Truth That Stripped Him", text:"He told her the secret. His Nazirite vow — the visible sign of his set-apart life — became a haircut. When the hair went, the presence lifted. Not because God is petty about hair — because Samson had finally traded his calling for intimacy with someone who wanted him broken. What have you surrendered piece by piece until you didn't recognize yourself?" },
+        { title:"Eyes Gone, Work Remaining", text:"They blinded him and put him to work like an animal. Strength without wisdom had made him a spectacle; now weakness made him useful to his enemies. Humiliation has a way of clarifying what you actually worshipped. Where has your life reduced you to grinding — and what truth about yourself is hardest to look at in that darkness?" },
+        { title:"Hair in the Dark", text:"His hair began to grow again. Growth nobody saw at first. Sometimes restoration starts underground — not with applause, with quiet biology while you're still chained. What small change is happening in you that doesn't look like a comeback yet — but is real?" },
+        { title:"Why This Matters to You", text:"Samson's last act was violent — he pushed pillars and died with his captors. The text doesn't tidy him into a hero. It's honest about cost. If you're living in the aftermath of your own choices, the question isn't whether you deserve a sequel — it's whether you'll let God meet you in the ruins without performing strength you don't have. What would honest weakness look like for you today — not as an excuse, but as a starting point?" },
+      ]
+    },
+    {
+      id:"joseph-brothers", title:"Joseph's Brothers", icon:"🕳️", tag:"Jealousy, Guilt, and Years",
+      color:"#7A6B5A",
+      summary:"They hated the dreamer. Threw him in a pit. Sold him. Lied to their father. Years later they didn't know the Egyptian lord was the brother they broke. This story is for anyone carrying group sin — what we did when we were scared and called it justice.",
+      chapters:[
+        { title:"The Coat They Couldn't Stand", text:"Jacob's love for Joseph wasn't subtle — the robe, the favoritism, the dreams. His brothers didn't just dislike Joseph; they felt erased. Jealousy rarely announces itself as evil; it feels like fairness catching up. Who in your life gets under your skin because their blessing feels like your diminishment — and what would it cost you to name that without reaching for harm?" },
+        { title:"The Pit and the Price", text:"Reuben tried to rescue him; Judah suggested selling him — less blood, more profit. Group decisions diffuse guilt: nobody has to own the whole cruelty. This chapter refuses that diffusion. When have you joined a crowd doing something you wouldn't do alone — and called it survival?" },
+        { title:"Years of Story They Couldn't Tell", text:"They lived with the lie to their father. Blood on a coat. Silence at dinner tables. Guilt doesn't always shout; sometimes it sits in the stomach for decades. What secret is your family, team, or friend group still not allowed to speak — and who pays for that silence?" },
+        { title:"The Accusation That Felt Familiar", text:"In Egypt, when trouble hit, they said: 'This is because of what we did to our brother.' Trauma has memory. The chapter asks whether you've ever felt punished and known, deep down, you weren't innocent. What past harm are you still waiting to have named out loud?" },
+        { title:"Why This Matters to You", text:"Joseph's forgiveness wasn't cheap — it came after testing, tears, and truth. If you're the sibling who hurt someone, the coworker who scapegoated, the one who went along — repair might be slow and awkward. But hiding behind 'we were young' or 'that's just how it was' keeps the pit open. What truth do you owe someone — not to crush yourself, but to free both of you — and what's stopping you from speaking it?" },
+      ]
+    },
+    {
+      id:"rahab-cord", title:"Rahab: The Scarlet Line", icon:"🧵", tag:"Risk on the Wrong Side of the Wall",
+      color:"#B85C5C",
+      summary:"She hid spies, lied to the king, and hung a cord out the window — a marker in a city marked for destruction. Rahab's story is for anyone whose survival has required morally messy choices — and who still wants a future.",
+      chapters:[
+        { title:"What She Knew About Fear", text:"Jericho heard Israel was coming. Rahab didn't have the luxury of abstract faith — she had a business, a house built into the wall, and soldiers asking questions. Fear of God and fear of men weren't theoretical. When has fear forced you to decide fast — and who got hurt in the fallout?" },
+        { title:"The Lie That Saved Strangers", text:"She sent the king's men on a wild goose chase. Scripture doesn't sanitize her as naive — she was strategic. Sometimes the text holds complexity: deliverance and deception in the same breath. Where have you bent the truth to protect someone vulnerable — and how do you live with that?" },
+        { title:"The Cord", text:"She tied a scarlet rope in the window — a sign, a promise, a visible 'this house.' It was small, specific, almost ridiculous. Salvation often looks like tying something ordinary where God said to tie it. What marker have you been asked to hang — obedience that looks silly until it doesn't?" },
+        { title:"Her House on the Margin", text:"Her family stayed inside the marked space. Being saved wasn't solo — it was relational, cramped, imperfect. Who are you responsible for that doesn't deserve less mercy than you want for yourself — even if bringing them along complicates the rescue?" },
+        { title:"Why This Matters to You", text:"Rahab shows up later in genealogies — not as a footnote of shame, but as a thread in a larger story. Your past doesn't get erased; it gets carried forward honestly. If you've made a life from edges and survival, the question isn't whether you're 'clean enough.' It's whether you'll let God write the next chapter without you hiding the window you actually lived in. What part of your story are you still editing so people won't flinch — and what would honesty cost you — and free you?" },
+      ]
+    },
+    {
+      id:"naomi", title:"Naomi", icon:"🌾", tag:"Bitterness That Still Walked",
+      color:"#9A8A6A",
+      summary:"Famine drove her family to Moab. She buried a husband and sons. She came home empty and told people to call her Bitter. Ruth clung to her anyway. This is for anyone whose life didn't turn out the way the story was supposed to go.",
+      chapters:[
+        { title:"Leaving Bread Behind", text:"They left Bethlehem — house of bread — for food elsewhere. Migration sounds brave in headlines; in real life it's exhaustion and grief with better geography. When have you relocated your pain — job, relationship, city — hoping distance would fix what was inside you?" },
+        { title:"The Names She Couldn't Keep", text:"Her sons died. Her line looked finished. Naomi wasn't polite about it; she told Ruth and Orpah to go home. Sometimes love sounds like pushing people away so you won't disappoint them again. Who have you tried to spare by leaving — and was it for them — or because staying seen felt unbearable?" },
+        { title:"Call Me Bitter", text:"She returned and said: don't call me Naomi — call me Mara. God has made my life bitter. Faith isn't always gratitude-first; sometimes it's blunt lament that refuses to perform fine. Where are you still performing 'blessed' when your body is screaming loss?" },
+        { title:"Ruth Wouldn't Leave", text:"Ruth's loyalty didn't fix Naomi's grief — it kept her from walking it alone. Healing rarely arrives as a speech; it arrives as someone who stays when you're not fun. Who has stayed — or who do you need — when you're not a good story yet?" },
+        { title:"Why This Matters to You", text:"The book ends with provision, a child, women celebrating — not because pain wasn't real, but because God kept writing in the soil of Naomi's 'empty.' If you're in the Mara season, you don't owe anyone a silver lining. The question is: can you let love stay close while you're still angry at how the plot unfolded — and can you receive goodness without pretending the bitterness never happened?" },
+      ]
+    },
+    {
+      id:"saul-persecutor", title:"Saul: Before the Light", icon:"⚡", tag:"Certainty That Hurts People",
+      color:"#6A5A8A",
+      summary:"He breathed threats and murder against the church — approved Stephen's execution, chased believers house to house. Saul wasn't a cartoon villain; he thought he was right. For anyone whose conviction has bruised others — or who fears they've gone too far to turn.",
+      chapters:[
+        { title:"Zeal With a Knife Edge", text:"Saul was trained, sharp, devoted — the kind of person who could quote tradition while breaking people. Religious certainty without mercy doesn't feel evil from the inside; it feels like faithfulness. When has being 'right' made you dangerous — and who got smaller in your presence?" },
+        { title:"Holding the Coats", text:"He stood there while Stephen died — guarding clothes, consenting with presence. Sometimes evil is participation without throwing the first stone. Where have you lent your approval to harm because it was easier than interrupting the crowd?" },
+        { title:"Letters and Doors", text:"He wanted permission to drag people back bound — systematic, organized harm. Power plus paperwork is hard to stop. What systems — in your world — reward conformity and punish dissent — and how have you benefited from them?" },
+        { title:"The Road He Didn't Expect", text:"The Damascus story is famous — bright light, voice, blindness. Before any of that, Saul was utterly convinced God was on his side. This chapter sits in the shock: the moment your entire moral universe flips and you realize you've been harming what God loves. What belief about yourself would break you if it turned out false?" },
+        { title:"Why This Matters to You", text:"Paul's later letters don't erase Saul's past — they transform it into testimony. If you've hurt people in God's name — or any name — defensiveness won't heal them. The question isn't whether you can explain yourself. It's whether you'll let mercy interrupt you the way it interrupted Saul: painfully, undeniably, with a road you didn't plan to walk. Who needs your apology more than your theology — and what's stopping you?" },
+      ]
+    },
+    {
+      id:"thomas-touch", title:"Thomas: My Lord and My God", icon:"✋", tag:"When Doubt Refuses Fake Peace",
+      color:"#5A7A8A",
+      summary:"He wasn't there the first time Jesus appeared. He said he needed to see — touch the wounds — or he wouldn't believe. A week later, Jesus offered his hands. This is for anyone who can't pretend faith they don't feel.",
+      chapters:[
+        { title:"The Absence That Felt Personal", text:"Everyone else saw — Thomas didn't. Grief plus isolation makes doubt feel like the only honest option. When has being left out of a 'miracle moment' made you feel like your pain wasn't worth God's timing?" },
+        { title:"I Need the Scars", text:"Thomas didn't ask for comfort — he asked for evidence. Jesus didn't shame him for specificity. This chapter honors the request: faith isn't always tidy — sometimes it's brutal honesty about what you require to trust again. What would you need to see — or feel — to stop bracing for disappointment?" },
+        { title:"Peace Before Proof", text:"When Jesus returned, He offered peace first — then invited Thomas closer. Order matters: you're not a project to be argued into belief; you're a person being addressed. Where in your life does someone rush your healing — and where do you need space before you can reach?" },
+        { title:"Touch and Worship", text:"Thomas saw and said what others had danced around: 'My Lord and my God.' Doubt didn't disqualify him — it carried him to a confession rooted in encounter, not rumor. What would you say to God if you weren't afraid of sounding too desperate or too skeptical?" },
+        { title:"Why This Matters to You", text:"Jesus blessed those who haven't seen — yet Thomas's story remains in the text. God leaves room for the late arriver, the skeptic, the one who needs skin-level proof. If your faith feels thin, the question isn't whether you're 'bad at believing.' It's whether you'll keep showing up to the room where truth can meet you — even a week late — instead of hiding behind cynicism that pretends it doesn't care." },
+      ]
+    },
+    {
+      id:"martha-bethany", title:"Martha of Bethany", icon:"🍲", tag:"Love That Looks Like Work",
+      color:"#7A9B6E",
+      summary:"She served Jesus dinner — then complained her sister wasn't helping. Later, her brother died while Jesus waited. Martha met Him with grief and grit: 'If you had been here.' This is for everyone who does the work and wonders if anyone sees.",
+      chapters:[
+        { title:"The Kitchen and the Resentment", text:"Martha opened her home — then snapped: doesn't Jesus care that Mary left her alone? Service curdles when it becomes proof you matter. Where is your helpfulness becoming a scoreboard — and who are you angry at for not noticing?" },
+        { title:"One Thing — Not Nothing", text:"Jesus didn't call Martha lazy — He named her anxiety and said Mary chose what wouldn't be taken from her. This chapter hurts: sometimes the 'better' part isn't productivity. What are you busy proving — that you can hold everything — and what is it costing your attention?" },
+        { title:"Lazarus Dies on the Clock", text:"Word went out: the one you love is sick. Jesus stayed two days. Martha's theology held: even now God can do anything — but her pain was real. When have you trusted God in theory while your stomach dropped in practice?" },
+        { title:"If You Had Been Here", text:"She said it plain — not polite. Jesus met her in it. Grief doesn't need a tidy prayer; it needs a Person who doesn't flinch at accusation. What honest sentence about disappointment have you been editing out of your conversations with God?" },
+        { title:"Why This Matters to You", text:"Martha keeps showing up — in the kitchen, at the grave, in worship. Her faith isn't less because it's hands-on; it's human. If you serve until you're empty, the question isn't whether you're 'spiritual enough.' It's whether you can receive love without earning it — and whether you'll let Jesus call you by name in your grief, not just use you for hospitality." },
+      ]
+    },
+    {
+      id:"zacchaeus-restitution", title:"Zacchaeus: Half and Fourfold", icon:"💰", tag:"Money That Finally Costs Something",
+      color:"#5A8A6E",
+      summary:"Short, curious, up a tree — then hosting Jesus in a house full of dirty money. Zacchaeus didn't offer vague spirituality; he named numbers. For anyone whose repentance needs a calculator.",
+      chapters:[
+        { title:"Seen in the Tree", text:"He ran ahead and climbed — undignified, obvious. Jesus looked up and called him by name. Shame hates being seen; grace starts with being named. Where are you hiding — literally or emotionally — hoping to observe faith without being exposed?" },
+        { title:"The House Nobody Trusted", text:"People grumbled: Jesus went to a sinner's home. Zacchaeus's wealth had a reputation. Some doors only open when truth sits at your table. Who would you rather not have over — because they'd see how you actually live?" },
+        { title:"Half and Fourfold", text:"He pledged half his possessions to the poor — and repaid anyone he'd cheated four times over. Repentance with money isn't optional for everyone the same way — but for him, integrity had a price tag. What would restitution look like in your actual bank account, schedule, or relationships — not as performance, as repair?" },
+        { title:"Salvation and a Household", text:"Jesus said salvation came to his house — not as a private feeling, but as a whole-life turn. Faith isn't solo when dependants, employees, and victims are woven into your story. Who else would change if you changed for real?" },
+        { title:"Why This Matters to You", text:"Zacchaeus didn't argue his way into goodness — he rerouted resources. If your faith never touches your wallet, your calendar, or your honesty about harm, ask why. What restitution are you avoiding because it would cost you the lifestyle your conscience has been quietly judging?" },
+      ]
+    },
+    {
+      id:"prodigal-father", title:"The Father Who Ran", icon:"🏃", tag:"Love That Looks Like Loss",
+      color:"#C9A84C",
+      summary:"He divided the estate when his son asked for death-in-advance money — then watched the road. The prodigal story is often about the son; this is the father's ache: waiting, scanning, spending dignity to embrace what returned half-dead.",
+      chapters:[
+        { title:"The Inheritance He Gave Away", text:"The younger son asked for his share — a brutal request. The father granted it. Some love looks like letting someone leave with what will destroy them — because control isn't the same as love. When have you released someone you could have clung to — and what did it cost you to keep your hands open?" },
+        { title:"The Road He Watched", text:"Nothing says the father chased the son in the far country. He waited. Scanning. Years of not knowing — alive or dead, changed or hardened. Waiting isn't passive; it's a quiet hemorrhage of hope. Who are you watching the road for — and what does the waiting do to your sleep?" },
+        { title:"He Ran — Undignified", text:"When the silhouette appeared, the father ran — in a culture where elders didn't run. He abandoned status to close distance. This chapter asks where you still care about looking composed when someone you love needs you undignified and fast. What pride keeps you walking when you should be sprinting?" },
+        { title:"Kill the Fattened Calf", text:"Restoration wasn't a private hug — it was a public feast. The father threw a party the older brother couldn't stand. Mercy disrupts fairness. When you celebrate someone's return, who feels insulted — and what does that reveal about your sense of justice?" },
+        { title:"Why This Matters to You", text:"The father pleads with the angry older son — still negotiating, still inviting. Parental love here isn't sentimental; it's relentless and sometimes one-sided. If you're the one who stayed, worked, obeyed — and you resent the party — the question isn't whether you're wrong to feel it. It's whether you can receive joy that doesn't follow your ledger. And if you're the one who wandered: can you believe the running figure is for you — not for the version of you that deserves it?" },
+      ]
+    },
+    {
+      id:"hosea", title:"Hosea", icon:"💔", tag:"Love That Keeps Showing Up",
+      color:"#A85C78",
+      summary:"God told a prophet to marry someone the story names as unfaithful — then kept bringing her home. Hosea's marriage wasn't an illustration of tidy romance; it was a living argument about pain, covenant, and cost.",
+      chapters:[
+        { title:"The Command Nobody Wants", text:"Go, marry — the text names Gomer's background plainly. Hosea didn't get a comfortable call. Sometimes obedience looks like tying your life to chaos. What assignment in your life feels like it costs more than you signed up for — and what's the real reason you want out?" },
+        { title:"Children Named Like Warnings", text:"Their kids carried names that announced fracture: No Mercy, Not My People. Truth-telling can be cruel-sounding — and still necessary. What truth does your family, church, or culture keep redecorating — while the house is splitting?" },
+        { title:"Separation and Return", text:"Gomer left — Hosea was told to love her again, redeem her, bring her home. Covenant love isn't blind; it's stubborn. Where are you being asked to pursue repair that the other person hasn't earned — and what's your fear underneath that call?" },
+        { title:"God's Voice in the Marriage Wreckage", text:"The book swings wide: Israel's idolatry, politics, empty ritual. Personal pain and national failure mirror each other. This chapter refuses cheap application: suffering isn't always 'for a lesson.' But it can become speech — honest words to God about betrayal. What have you lived that you still don't have language for?" },
+        { title:"Why This Matters to You", text:"Hosea isn't a manual for staying in abuse — it's a brutal portrait of God's refusal to let love shrink to what feels fair. For you: where has your heart gone cold toward someone — or toward God — because staying open felt foolish? What would it look like to tell the truth about that — without pretending the wound isn't real?" },
+      ]
+    },
+    {
+      id:"jeremiah", title:"Jeremiah", icon:"🏺", tag:"The Word Nobody Wanted",
+      color:"#8A7A6A",
+      summary:"Called young, told not to fear — then assigned to speak judgment people would reject. He wept, bought land in a siege, and carried grief in public. For anyone who sees what's coming and can't get anyone to listen.",
+      chapters:[
+        { title:"I Don't Know How to Speak", text:"Jeremiah's first protest was inadequacy — 'I am only a child.' God didn't mock the fear; He touched his mouth and sent him anyway. Where does your sense of 'not enough' actually protect you from having to say hard things?" },
+        { title:"The Potter and the Clay", text:"At the potter's house, the vessel marred — remade. Some messages aren't lectures; they're watched processes. What in your life is being smashed and reshaped — and can you stand the workshop noise?" },
+        { title:"Temple Sermons That Nearly Killed Him", text:"He spoke in the gate — truth where people did business — and leaders wanted him dead. Faithfulness isn't the same as likability. When has telling the truth cost you belonging — and did you keep speaking?" },
+        { title:"Buying a Field in a Siege", text:"God told him to buy land as a down payment on future — while everything looked finished. Hope can look financially insane. What absurd act of hope have you avoided because the numbers don't work?" },
+        { title:"Why This Matters to You", text:"Jeremiah is called the weeping prophet — not because he was weak, but because he loved people who refused rescue. If you carry grief for your family, your city, your church — the question isn't whether you're dramatic. It's whether you'll keep loving the truth enough to speak it — and care for your own soul while the room stays hostile. Who needs your honest words — and what support do you need so bitterness doesn't eat you alive?" },
+      ]
+    },
+    {
+      id:"isaiah-servant", title:"Isaiah: The Suffering Servant", icon:"🌑", tag:"Victory That Looks Like Defeat",
+      color:"#6A6080",
+      summary:"Beyond the throne vision, Isaiah spoke of a servant — despised, rejected, acquainted with grief — who would bear others' pain. For anyone whose faithfulness looks like failure on a spreadsheet.",
+      chapters:[
+        { title:"No Beauty to Attract", text:"The servant wouldn't be the hero people picked from a lineup — no glamour, no polish. God often works through the overlooked carrier of pain. Where are you judging someone's impact — or your own — by visibility?" },
+        { title:"Wounded for the Transgression", text:"The language is visceral: bruised, crushed, punishment that brings peace. This chapter sits heavy — suffering that isn't meaningless but also isn't fair. What pain in your life have you been trying to redeem with explanations — and what if some of it is simply carried — not solved?" },
+        { title:"Silent Like a Sheep", text:"The servant opened no mouth — not as virtue signaling, but as surrender in the machinery of injustice. Silence can be holy; silence can also be trauma. Which silence is yours — and does it need words — or protection?" },
+        { title:"Light to the Nations", text:"The horizon widens: justice, healing, inclusion — God's reign beyond ethnic lines. Hope isn't a private mood; it's a public repair. What broken system are you tempted to ignore because fixing it feels above your pay grade?" },
+        { title:"Why This Matters to You", text:"Isaiah's servant poems have fueled centuries of debate — but the emotional core is plain: God shows up through suffering love, not only triumphant noise. If your life feels more crushed than crowned, the question isn't whether you're 'doing faith right.' It's whether you'll let God be near your grief without demanding an immediate trophy — and whether you'll receive comfort without turning someone else's pain into your sermon illustration." },
+      ]
+    },
+    {
+      id:"mordecai", title:"Mordecai", icon:"🎗️", tag:"Refusing to Bow",
+      color:"#5A6A8A",
+      summary:"He raised Esther as a daughter, sat at the king's gate, refused to honor Haman — and kicked a genocide plot into the open through grief worn visibly. For anyone who resists power at personal cost.",
+      chapters:[
+        { title:"At the Gate", text:"Mordecai worked the system from its edge — close enough to hear news, far enough to be overlooked. Faithfulness in boring posts matters. Where are you serving invisibly — and tempted to believe it doesn't count?" },
+        { title:"The Bow He Wouldn't Make", text:"Haman demanded homage — Mordecai wouldn't budge. Conviction isn't always loud; sometimes it's a quiet spine. What small compromise are you being pressured to make — that feels harmless only until it isn't?" },
+        { title:"Sackcloth Instead of Spin", text:"When the edict dropped, Mordecai wept publicly — ashes, crying — no PR strategy. Some grief has to be seen before it can be fought. Where are you polishing pain that needs to be witnessed?" },
+        { title:"Esther's Dangerous Courage", text:"He sent word into the palace: maybe you were made for this — not as flattery, as summons. Leadership sometimes means asking someone else to risk what you can't spare them from. Who have you empowered to step into danger — and did you stay with them in it?" },
+        { title:"Why This Matters to You", text:"The story ends with deliverance — but Mordecai's arc is persistence without guarantee. If you're opposing wrong that's bigger than you — family drama, workplace bullying, civic evil — the question isn't whether you'll feel scared. You will. The question is whether you'll keep showing up at the gate — truth told, grief worn, courage shared — even when the king is slow to answer. What truth needs someone at the gate right now — and will you be there?" },
+      ]
+    },
+    {
+      id:"woman-well-deep", title:"The Woman at the Well: Thirst", icon:"💠", tag:"Truth Spoken at Noon",
+      color:"#4A8AB8",
+      summary:"She came when the sun was worst — to avoid people. A Jewish man asked her for water — then spoke her relational history without sneering. For anyone convinced that if people knew the real story, they'd leave.",
+      chapters:[
+        { title:"Noon Wasn't Neutral", text:"She drew water at the hottest hour — timing shaped by shame. Isolation feels like safety; it's often slow suffocation. What schedule have you built to avoid being seen — and what is it costing your soul?" },
+        { title:"A Jew Asks a Samaritan", text:"Jesus crossed lines — gender, ethnicity, religious feud — with a simple request: give me a drink. Respect doesn't always start with a lecture; it starts with need. Who have you avoided because the wall between you felt ancient — and what would happen if you admitted thirst first?" },
+        { title:"Go Get Your Husband", text:"Jesus named her reality — not to crush her, to cut through deflection. Truth can feel like exposure; it can also be the end of lonely performance. What answer have you been rehearsing — that keeps you from the next sentence God wants to speak?" },
+        { title:"Spirit and Truth", text:"She pivoted to debate — where to worship. Jesus widened the frame: the Father wants worshippers whose spirit is honest. Religion without truth becomes theater. Where are you performing devotion — while your interior life is still thirsty?" },
+        { title:"Why This Matters to You", text:"She left her jar — ran toward the people she'd been hiding from — and told them: come see someone who told me everything I've ever done. Shame loses oxygen when truth is spoken without disgust. If you're carrying a story that makes you avoid midday, the question isn't whether you're 'too far gone.' It's whether you'll risk hearing your life named without contempt — and whether you'll let that naming send you back toward community — not as perfect — as free. Who needs to hear your real story — and what's the first true sentence?" },
+      ]
+    },
   ];
 
   if (activeStory) {
@@ -4434,6 +5736,10 @@ function BibleStoriesScreen({ C, font, setScreen, faithLevel }) {
             {isLast ? (
               <button onClick={() => { 
                 try{const s=JSON.parse(localStorage.getItem("selah_biblical_done")||"[]");if(!s.includes(activeStory)){s.push(activeStory);localStorage.setItem("selah_biblical_done",JSON.stringify(s));};}catch(e){}
+                try {
+                  const hasF = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation || isTrialActive;
+                  if (hasF) markMissionTask(5);
+                } catch (e) {}
                 setActiveStory(null); setChapterIdx(0); }} style={{
                 background:`${story.color}15`, border:`1px solid ${story.color}33`,
                 borderRadius:"30px", padding:"12px 28px", cursor:"pointer",
@@ -4910,7 +6216,7 @@ function GuidedTour({ C, font, onDismiss, onGoToSettings, setScreen }) {
 // ═══════════════════════════════════════════════════════
 // HOME SCREEN
 // ═══════════════════════════════════════════════════════
-function HomeScreen({ C, font, setScreen, userName, steadyDays, showLateNight, sharingEnabled, onboardingAnswers, faithLevel, isFirstVisit, onDismissWelcome, onLogMood, onActive, lastFeedbackPrompt, onDismissFeedback, sessionCount, tone, quoteFreq, tier, isTrialActive, onUpgrade, moodHistory, sessionHistory, journalEntries, setJournalEntries, seasonalMode, setSeasonalMode, currentSeason, graceUsedWeek, showTutorial, setShowTutorial }) {
+function HomeScreen({ C, font, setScreen, userName, steadyDays, showLateNight, sharingEnabled, onboardingAnswers, faithLevel, isFirstVisit, onDismissWelcome, onLogMood, onActive, lastFeedbackPrompt, onDismissFeedback, sessionCount, tone, quoteFreq, tier, isTrialActive, onUpgrade, moodHistory, sessionHistory, journalEntries, setJournalEntries, seasonalMode, setSeasonalMode, currentSeason, graceUsedWeek, weeklyGraceBudget, showTutorial, setShowTutorial }) {
   const [quote,setQuote]=useState(null);
   const [loading,setLoading]=useState(true);
   const [copied,setCopied]=useState(false);
@@ -4943,6 +6249,9 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, showLateNight, s
   const [activeChallenge,setActiveChallenge]=useState(null);
   const [monthlyGoal,setMonthlyGoal]=useState(null);
   const [goalLoading,setGoalLoading]=useState(false);
+  const [missionUiRev,setMissionUiRev]=useState(0);
+  const [weekInWords, setWeekInWords] = useState(null);
+  const [weekInWordsLoading, setWeekInWordsLoading] = useState(false);
 
   // Time of day — living home screen
   const [timeOfDay, setTimeOfDay] = useState(() => {
@@ -4977,6 +6286,61 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, showLateNight, s
     late:      { overlay: "#1A1830", opacity: 0.15, label: "Late night", sub: "Rest is holy too." },
   };
   const tod = TOD[timeOfDay];
+
+  const weekInWordsEligible = useMemo(() => {
+    const isAdmin = new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04";
+    if ((TIER_LEVELS[tier] || 0) < TIER_LEVELS.growth && !isAdmin) return false;
+    const now = new Date();
+    const dow = now.getDay();
+    if (dow === 0 || dow === 6) return true;
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const inLast7 = (d) => {
+      if (!d) return false;
+      const t = new Date(d).getTime();
+      return !Number.isNaN(t) && (now - t) >= 0 && (now - t) < weekMs;
+    };
+    return (sessionHistory || []).filter((s) => inLast7(s.date)).length >= 3;
+  }, [tier, sessionHistory]);
+
+  useEffect(() => {
+    const h = () => setMissionUiRev((r) => r + 1);
+    window.addEventListener(MISSION_EVENT, h);
+    return () => window.removeEventListener(MISSION_EVENT, h);
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem("selah_mission_start")) {
+        localStorage.setItem("selah_mission_start", new Date().toISOString().slice(0, 10));
+        window.dispatchEvent(new Event(MISSION_EVENT));
+      }
+    } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem("selah_mission_start")) return;
+      let ch = false;
+      if (sessionCount >= 1 && !localStorage.getItem("selah_mission_task_1")) { localStorage.setItem("selah_mission_task_1", "1"); ch = true; }
+      if ((journalEntries?.length || 0) >= 1 && !localStorage.getItem("selah_mission_task_3")) { localStorage.setItem("selah_mission_task_3", "1"); ch = true; }
+      const bc = parseInt(localStorage.getItem("selah_breathe_count") || "0", 10);
+      if (bc >= 1 && !localStorage.getItem("selah_mission_task_4")) { localStorage.setItem("selah_mission_task_4", "1"); ch = true; }
+      const cc = parseInt(localStorage.getItem("selah_checkin_count") || "0", 10);
+      if (cc >= 1 && !localStorage.getItem("selah_mission_task_6")) { localStorage.setItem("selah_mission_task_6", "1"); ch = true; }
+      const hasF = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation || isTrialActive;
+      const bib = (() => { try { return JSON.parse(localStorage.getItem("selah_biblical_done") || "[]"); } catch { return []; } })();
+      if (hasF && bib.length >= 1 && !localStorage.getItem("selah_mission_task_5")) { localStorage.setItem("selah_mission_task_5", "1"); ch = true; }
+      if (!hasF && localStorage.getItem("selah_mission_heavy_done") === "1" && !localStorage.getItem("selah_mission_task_5")) { localStorage.setItem("selah_mission_task_5", "1"); ch = true; }
+      if ((localStorage.getItem("selah_prayer_posted") || localStorage.getItem("selah_prayer_supported")) && !localStorage.getItem("selah_mission_task_7")) { localStorage.setItem("selah_mission_task_7", "1"); ch = true; }
+      if (localStorage.getItem("selah_mission_guided_done") === "1" && !localStorage.getItem("selah_mission_task_2")) { localStorage.setItem("selah_mission_task_2", "1"); ch = true; }
+      if (ch) {
+        let all = true;
+        for (let i = 1; i <= 7; i++) { if (!localStorage.getItem(`selah_mission_task_${i}`)) all = false; }
+        if (all) localStorage.setItem("selah_mission_complete", "1");
+        window.dispatchEvent(new Event(MISSION_EVENT));
+      }
+    } catch (e) {}
+  }, [sessionCount, journalEntries, tier, isTrialActive]);
 
   useEffect(()=>{
     const isAdmin = new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04";
@@ -5095,6 +6459,122 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
     };
     generateRecap();
   }, [tier]);
+
+  // This Week in Your Words — Growth+; weekends OR 3+ sessions in last 7 days
+  useEffect(() => {
+    if (!weekInWordsEligible) {
+      setWeekInWords(null);
+      setWeekInWordsLoading(false);
+      return;
+    }
+
+    const now = new Date();
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const inLast7 = (d) => {
+      if (!d) return false;
+      const t = new Date(d).getTime();
+      return !Number.isNaN(t) && (now - t) >= 0 && (now - t) < weekMs;
+    };
+    const weekSessions = (sessionHistory || []).filter((s) => inLast7(s.date));
+    const weekMoods = (moodHistory || []).filter((m) => inLast7(m.date));
+    const sessionSig = weekSessions.map((s) => `${s.id}-${s.date}`).join("|");
+    const moodSig = weekMoods.map((m) => `${m.date}-${m.mood}-${m.word || ""}`).join("|");
+    const cacheSig = `${tier}|${sessionSig}|${moodSig}`;
+
+    try {
+      const cached = JSON.parse(localStorage.getItem("selah_week_in_words_v1") || "null");
+      if (cached && cached.sig === cacheSig && cached.text) {
+        setWeekInWords(cached.text);
+        setWeekInWordsLoading(false);
+        return;
+      }
+    } catch {}
+
+    let cancelled = false;
+    const run = async () => {
+      setWeekInWordsLoading(true);
+      setWeekInWords(null);
+
+      const moodNames = ["Very low", "Low", "Neutral", "Good", "Great"];
+      const moodLines = weekMoods.length
+        ? weekMoods
+            .map((m) => {
+              const label = moodNames[m.mood] ?? "?";
+              const day = m.date ? new Date(m.date).toLocaleDateString() : "";
+              return `${day}: ${label}${m.word ? ` (“${m.word}”)` : ""}`;
+            })
+            .join("; ")
+        : "No mood check-ins in the last 7 days.";
+
+      const sessionLines = weekSessions.length
+        ? weekSessions
+            .map((s) => {
+              const when = s.date ? new Date(s.date).toLocaleDateString() : "";
+              const ins = (s.insight || "").trim().slice(0, 220);
+              const cat = s.category || "Reflection";
+              return `- ${when} · ${cat}${ins ? ` — ${ins}` : ""}`;
+            })
+            .join("\n")
+        : "No reflection sessions in the last 7 days.";
+
+      const isDeep = tier === "deep";
+      const lengthGuide = isDeep
+        ? "Write 6 to 8 sentences. Include one specific observation about their growth — something that shows you noticed how they are changing, not just what they did."
+        : "Write exactly 3 to 4 sentences total.";
+
+      const prompt = `You are Selah — a faith-rooted clarity companion. Write "This Week in Your Words" — a summary of THIS PERSON'S LAST 7 DAYS of reflection sessions and mood check-ins.
+
+Reflection sessions (newest first in the list below):
+${sessionLines}
+
+Mood check-ins (last 7 days):
+${moodLines}
+
+Requirements:
+- ${lengthGuide}
+- Cover: (1) key themes they explored in reflection, (2) emotional patterns visible in their moods, (3) one encouraging takeaway that feels personal and grounded — not generic.
+- ${faithLevel >= 2 ? "Weave faith gently if it fits; do not preach." : "Keep language secular."}
+- ${tone === "warm" ? "Be warm and nurturing." : tone === "spiritual" ? "Lead with a spiritual tone." : "Be grounded and direct."}
+Write in second person ("you"). No bullet points. No headings. No therapy jargon. Sound like a wise friend who read their week closely.`;
+
+      try {
+        const r = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: isDeep ? 700 : 400,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        });
+        const d = await r.json();
+        if (d.error) throw new Error(d.error?.message || "API error");
+        const text = d.content.map((b) => b.text || "").join("").trim();
+        if (!cancelled && text) {
+          setWeekInWords(text);
+          try {
+            localStorage.setItem("selah_week_in_words_v1", JSON.stringify({ sig: cacheSig, text, tier }));
+          } catch {}
+        } else if (!cancelled) {
+          setWeekInWords(
+            "You moved through this week in your own words — in reflections and quiet check-ins. That honesty is already part of your growth."
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setWeekInWords(
+            "You moved through this week in your own words — in reflections and quiet check-ins. That honesty is already part of your growth."
+          );
+        }
+      } finally {
+        if (!cancelled) setWeekInWordsLoading(false);
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [weekInWordsEligible, tier, sessionHistory, moodHistory, faithLevel, tone]);
 
   // Sunday Question — every Sunday, Foundation+, one question, saves answer to journal
   useEffect(() => {
@@ -5548,6 +7028,20 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
     setTimeout(()=>markAllRead(), 1500);
   };
 
+  useEffect(() => {
+    if (!showNotifications) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e) => {
+      if (e.key === "Escape") setShowNotifications(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [showNotifications]);
+
   return (
     <div style={{ minHeight:"100vh",background:C.bgPrimary,fontFamily:font,
       padding:"40px 20px 100px",boxSizing:"border-box",position:"relative",overflow:"hidden" }}>
@@ -5615,7 +7109,7 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
               const getDateStr = d => d.toISOString().split("T")[0];
               const currentWeekKey = getDateStr(weekStart);
               const graceCount = (graceUsedWeek?.week === currentWeekKey) ? (graceUsedWeek?.count || 0) : 0;
-              const graceActive = graceCount > 0;
+              const graceActive = weeklyGraceBudget > 0 && graceCount > 0;
               return (
                 <div onClick={()=>setScreen("progress")}
                   style={{ background:C.bgSecondary,borderRadius:"8px",
@@ -5638,6 +7132,20 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
           </div>
         </div>
 
+        {(() => {
+          const now = new Date();
+          const dayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
+          const weekStart = new Date(now); weekStart.setDate(now.getDate() - dayOfWeek + 1);
+          const currentWeekKey = weekStart.toISOString().split("T")[0];
+          const graceCount = (graceUsedWeek?.week === currentWeekKey) ? (graceUsedWeek?.count || 0) : 0;
+          if (weeklyGraceBudget <= 0 || graceCount <= 0) return null;
+          return (
+            <p style={{ color:C.textMuted, fontSize:"10px", fontStyle:"italic", margin:"0 0 16px", lineHeight:1.5, paddingLeft:"2px" }}>
+              {graceCount === 1 ? "Grace day used" : "Grace days used"} — streak protected
+            </p>
+          );
+        })()}
+
         {/* ── CRISIS QUICK ACCESS ── */}
         <div onClick={()=>setShowCrisisPanel(true)} style={{
           background:`${C.terra}08`, border:`1px solid ${C.terra}22`,
@@ -5659,6 +7167,61 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
           </div>
           <span style={{ color:C.terra, fontSize:"14px" }}>→</span>
         </div>
+
+        {(() => {
+          void missionUiRev;
+          const ms = getMissionHomeState();
+          if (!ms.show) return null;
+          const tasks = ms.tasks;
+          const hasF = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation || isTrialActive;
+          const day5Short = hasF ? "Biblical" : "Heavy Day";
+          const labels = ["Reflect", "Guided prayer", "Notebook", "Breathe", day5Short, "Check-in", "Prayer wall"];
+          const doneCount = tasks.filter(Boolean).length;
+          if (ms.allDone) {
+            return (
+              <div style={{ background:`${C.sage}10`, border:`1.5px solid ${C.sage}44`, borderRadius:"12px", padding:"18px 18px 16px", marginBottom:"16px", position:"relative" }}>
+                <button type="button" onClick={() => { try { localStorage.setItem("selah_mission_banner_dismissed", "1"); } catch (e) {} setMissionUiRev((r) => r + 1); }} style={{ position:"absolute", top:"10px", right:"12px", background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"14px", lineHeight:1 }}>✕</button>
+                <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"14px" }}>
+                  <div style={{ fontSize:"40px", lineHeight:1 }}>🌿</div>
+                  <div>
+                    <p style={{ color:C.sage, fontSize:"9px", letterSpacing:"2.5px", textTransform:"uppercase", fontStyle:"italic", margin:0 }}>First Week</p>
+                    <p style={{ color:C.textPrimary, fontSize:"16px", fontFamily:font, margin:"4px 0 0", fontWeight:"normal" }}>You finished your 7-day introduction.</p>
+                  </div>
+                </div>
+                <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:"1.7", margin:"0 0 10px" }}>
+                  Your <strong style={{ fontWeight:"normal", color:C.sage }}>First Week</strong> badge{(TIER_LEVELS[tier] || 0) >= TIER_LEVELS.growth ? " is unlocked in Progress" : " will appear when you open Progress (Growth+)"} — a quiet marker of how you showed up.
+                </p>
+                {(TIER_LEVELS[tier] || 0) >= TIER_LEVELS.growth && (
+                <button type="button" onClick={() => setScreen("progress")} style={{ background:"none", border:`1px solid ${C.sage}55`, borderRadius:"3px", color:C.sage, fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", padding:"10px 18px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>View in Progress</button>
+                )}
+              </div>
+            );
+          }
+          return (
+            <div style={{ background:C.bgSecondary, border:`1px solid ${C.border}`, borderRadius:"12px", padding:"16px 14px 18px", marginBottom:"16px" }}>
+              <p style={{ color:C.accent, fontSize:"9px", letterSpacing:"2.5px", textTransform:"uppercase", fontStyle:"italic", margin:"0 0 4px" }}>Your first week</p>
+              <p style={{ color:C.textPrimary, fontSize:"14px", fontFamily:font, margin:"0 0 12px", fontWeight:"normal" }}>{doneCount}/7 complete</p>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"4px", marginBottom:"12px" }}>
+                {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+                  <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:"4px", minWidth:0 }}>
+                    <div style={{
+                      width:"min(32px, 10vw)", height:"min(32px, 10vw)", borderRadius:"50%",
+                      background: tasks[i] ? C.accent : "transparent",
+                      border:`2px solid ${tasks[i] ? C.accent : C.border}`,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      color: tasks[i] ? "#fff" : C.textMuted,
+                      fontSize:"10px", fontWeight:"bold", fontFamily:font,
+                    }}>{tasks[i] ? "✓" : i + 1}</div>
+                    <span style={{ color:C.textMuted, fontSize:"6px", textAlign:"center", lineHeight:1.25, fontStyle:"italic", wordBreak:"break-word" }}>{labels[i]}</span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic", lineHeight:"1.6", margin:0 }}>
+                Day {ms.daysInto} · Focus: <span style={{ color:C.textSoft }}>{labels[Math.min(ms.daysInto, 7) - 1]}</span>
+              </p>
+            </div>
+          );
+        })()}
 
         {/* ── TODAY'S ANCHOR (top of page) ── */}
         {canShowAnchor ? (
@@ -5800,6 +7363,41 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
                 </div>
               ))}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* This Week in Your Words — Growth+; Sat/Sun or 3+ sessions in last 7 days */}
+      {weekInWordsEligible && (weekInWordsLoading || weekInWords) && (
+        <div style={{ background:`${C.sage}08`, border:`1.5px solid ${C.sage}33`,
+          borderRadius:"12px", padding:"20px", marginBottom:"14px" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"10px" }}>
+            <span style={{ fontSize:"18px" }}>✍️</span>
+            <div>
+              <p style={{ color:C.sage, fontSize:"9px", letterSpacing:"3px",
+                textTransform:"uppercase", fontStyle:"italic", margin:0, fontWeight:"bold" }}>This Week in Your Words</p>
+              <p style={{ color:C.textMuted, fontSize:"10px", fontStyle:"italic", margin:"2px 0 0" }}>
+                {tier === "deep" ? "A closer read on your week" : "Themes, feelings & one takeaway"}
+              </p>
+            </div>
+          </div>
+          {weekInWordsLoading ? (
+            <div style={{ display:"flex", alignItems:"center", gap:"8px", padding:"8px 0" }}>
+              <div style={{ display:"flex", gap:"4px" }}>
+                {[0, 1, 2].map((i) => (
+                  <div key={i} style={{ width:"6px", height:"6px", borderRadius:"50%",
+                    background:C.sage, opacity:0.5,
+                    animation:"pulse 1.2s ease-in-out infinite",
+                    animationDelay:`${i * 0.2}s` }} />
+                ))}
+              </div>
+              <span style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic" }}>Gathering your week…</span>
+            </div>
+          ) : (
+            <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic",
+              lineHeight:"2", margin:0 }}>
+              {weekInWords}
+            </p>
           )}
         </div>
       )}
@@ -6276,6 +7874,7 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
           {[
             {icon:"◈",label:"Reflect",sub:"Begin a session",bg:`${C.sage}15`,color:C.sage,border:`${C.sage}22`,screen:"reflect"},
             {icon:"✍️",label:"Notebook",sub:"Write freely",bg:`${C.terra}12`,color:C.terra,border:`${C.terra}20`,screen:"journal"},
+            {icon:"🗺️",label:"Journeys",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation||isTrialActive?"🔒 Foundation+":"14-day seasonal paths",bg:`${C.accent}10`,color:C.accent,border:`${C.accent}22`,screen:"journeys"},
             {icon:"📜",label:"Biblical Reflections",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"Real stories, told straight",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}15`,screen:"stories"},
             {icon:"🌑",label:"Heavy Day",sub:"Lament. Be honest.",bg:`${C.terra}08`,color:C.terra,border:`${C.terra}18`,screen:"heavyday"},
             {icon:"🙏",label:"Gratitude",sub:"Count your blessings",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}18`,screen:"gratitude"},
@@ -6311,31 +7910,57 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
 
       </div>
 
-      {/* ── NOTIFICATION PANEL ── */}
-      {showNotifications&&(
-        <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",
-          zIndex:350,display:"flex",justifyContent:"flex-end",
-          animation:"fadeIn 0.2s ease" }}
-          onClick={()=>setShowNotifications(false)}>
-          <div style={{ width:"100%",maxWidth:"380px",height:"100vh",
-            background:C.bgPrimary,borderLeft:`1px solid ${C.border}`,
-            overflowY:"auto",padding:"0",boxSizing:"border-box",
-            animation:"slideInRight 0.3s ease" }}
-            onClick={e=>e.stopPropagation()}>
+      {/* ── NOTIFICATION PANEL (portal + backdrop so taps never reach Home behind) ── */}
+      {showNotifications && typeof document !== "undefined" && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="selah-notifications-title"
+          style={{
+            position:"fixed",inset:0,zIndex:10000,
+            animation:"selahNotiFadeIn 0.2s ease",
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Close notifications"
+            onClick={()=>setShowNotifications(false)}
+            style={{
+              position:"absolute",inset:0,margin:0,padding:0,border:"none",
+              background:"rgba(0,0,0,0.5)",cursor:"pointer",
+              WebkitTapHighlightColor:"transparent",
+            }}
+          />
+          <div
+            onClick={(e)=>e.stopPropagation()}
+            onPointerDown={(e)=>e.stopPropagation()}
+            style={{
+              position:"absolute",top:0,right:0,bottom:0,
+              width:"100%",maxWidth:"380px",height:"100vh",
+              background:C.bgPrimary,borderLeft:`1px solid ${C.border}`,
+              boxShadow:"-8px 0 32px rgba(0,0,0,0.15)",
+              overflowY:"auto",padding:0,boxSizing:"border-box",
+              animation:"selahNotiSlideIn 0.3s ease",
+              zIndex:1,pointerEvents:"auto",
+            }}
+          >
             {/* Panel header */}
             <div style={{ padding:"24px 20px 16px",borderBottom:`1px solid ${C.border}`,
               display:"flex",justifyContent:"space-between",alignItems:"center",
               position:"sticky",top:0,background:C.bgPrimary,zIndex:2 }}>
               <div>
-                <h2 style={{ color:C.textPrimary,fontSize:"18px",fontWeight:"normal",
+                <h2 id="selah-notifications-title" style={{ color:C.textPrimary,fontSize:"18px",fontWeight:"normal",
                   fontFamily:font,margin:"0 0 2px" }}>Notifications</h2>
                 <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",margin:0 }}>
                   {unreadCount > 0 ? `${unreadCount} new` : "All caught up"}
                 </p>
               </div>
-              <button onClick={()=>setShowNotifications(false)} style={{
+              <button type="button" aria-label="Close notifications" onClick={()=>setShowNotifications(false)} style={{
                 background:"none",border:"none",cursor:"pointer",
-                color:C.textMuted,fontSize:"20px",padding:"4px 8px" }}>✕</button>
+                color:C.textMuted,fontSize:"24px",lineHeight:1,width:"40px",height:"40px",
+                padding:0,display:"flex",alignItems:"center",justifyContent:"center",
+                borderRadius:"8px",fontFamily:"system-ui,sans-serif",
+              }}>×</button>
             </div>
 
             {/* Notification items */}
@@ -6361,7 +7986,7 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
                       { icon:"🌑", name:"Heavy Day", desc:"For the days where nothing feels okay." },
                       { icon:"🕯️", name:"Prayer Wall", desc:"Anonymous prayer requests. Real community." },
                       { icon:"🪑", name:"The Bench", desc:"Save insights and takeaways from your sessions." },
-                      { icon:"📜", name:"Biblical Reflections", desc:"50 Scripture stories retold raw and honest." },
+                      { icon:"📜", name:"Biblical Reflections", desc:"75 Scripture stories retold raw and honest." },
                     ].map(f=>(
                       <div key={f.name} style={{ display:"flex", alignItems:"flex-start", gap:"10px" }}>
                         <span style={{ fontSize:"13px", flexShrink:0, marginTop:"1px" }}>{f.icon}</span>
@@ -6429,10 +8054,11 @@ Write in second person ("you"). No bullet points. No therapy-speak. Sound like a
             </div>
           </div>
           <style>{`
-            @keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}
-            @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+            @keyframes selahNotiSlideIn{from{transform:translateX(100%)}to{transform:translateX(0)}}
+            @keyframes selahNotiFadeIn{from{opacity:0}to{opacity:1}}
           `}</style>
-        </div>
+        </div>,
+        document.body
       )}
 
         {/* Disclaimer footer */}
@@ -6486,7 +8112,7 @@ const DEEP_CATS=[
 // ─────────────────────────────────────────────
 // HEAVY DAY / LAMENT SCREEN
 // ─────────────────────────────────────────────
-function HeavyDayScreen({ C, font, onClose, faithLevel, userName }) {
+function HeavyDayScreen({ C, font, onClose, onHeavyDayComplete, faithLevel, userName }) {
   const [phase, setPhase] = useState("land"); // land → breathe → lament → hold → close
   const [lamentText, setLamentText] = useState("");
   const [aiResponse, setAiResponse] = useState(null);
@@ -6671,7 +8297,7 @@ function HeavyDayScreen({ C, font, onClose, faithLevel, userName }) {
                 lineHeight:"1.8", margin:"0 0 28px" }}>
                 You were heard. That's enough for today.
               </p>
-              <button onClick={onClose} style={{
+              <button onClick={()=>{ if (onHeavyDayComplete) onHeavyDayComplete(); onClose(); }} style={{
                 background:"none", border:`1.5px solid ${C.terra}55`,
                 borderRadius:"3px", color:C.terra, fontSize:"10px",
                 letterSpacing:"2.5px", textTransform:"uppercase",
@@ -6688,8 +8314,9 @@ function HeavyDayScreen({ C, font, onClose, faithLevel, userName }) {
   return null;
 }
 
-function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onSessionComplete, onboardingAnswers, userName, isMinorUser, tier, sessionHistory, seasonalContext, setBenchItems }) {
+function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onSessionComplete, onboardingAnswers, userName, isMinorUser, tier, sessionHistory, seasonalContext, setBenchItems, savedReflections, canSavePastReflections, onUpgrade, isTrialActive, moodHistory }) {
   const [phase,setPhase]=useState("entry");
+  const [pastDetail,setPastDetail]=useState(null);
   const [cat,setCat]=useState(null);
   const [freeText,setFreeText]=useState("");
   const [msgs,setMsgs]=useState([]);
@@ -6709,6 +8336,9 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
   // Track what was already in the input when we started, to avoid duplicating it
   const voiceBaseRef = useRef("");
   const voiceAccumulatedRef = useRef("");
+  const isGrowthPlus = (TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth;
+  const [ttsPlayingId, setTtsPlayingId] = useState(null);
+  const synthSupported = typeof window !== "undefined" && !!window.speechSynthesis;
 
   const startListening = () => {
     if (!voiceSupported || listening) return;
@@ -6765,6 +8395,44 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
 
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[msgs,loading]);
 
+  useEffect(() => {
+    if (!synthSupported) return undefined;
+    const synth = window.speechSynthesis;
+    const primeVoices = () => { try { pickWarmCalmVoice(); } catch (e) {} };
+    primeVoices();
+    synth.addEventListener("voiceschanged", primeVoices);
+    return () => {
+      synth.removeEventListener("voiceschanged", primeVoices);
+      try { synth.cancel(); } catch (e) {}
+    };
+  }, [synthSupported]);
+
+  const speakTts = (messageId, rawText) => {
+    if (!synthSupported) return;
+    const clean = stripTextForSpeech(rawText);
+    if (!clean) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(clean);
+    u.rate = 0.93;
+    u.pitch = 0.96;
+    const voice = pickWarmCalmVoice();
+    if (voice) u.voice = voice;
+    u.onend = () => setTtsPlayingId(null);
+    u.onerror = () => setTtsPlayingId(null);
+    setTtsPlayingId(messageId);
+    window.speechSynthesis.speak(u);
+  };
+
+  const onTtsToggle = (messageId, rawText) => {
+    if (!synthSupported) return;
+    if (ttsPlayingId === messageId) {
+      window.speechSynthesis.cancel();
+      setTtsPlayingId(null);
+    } else {
+      speakTts(messageId, rawText);
+    }
+  };
+
   const onboardCtx = onboardingAnswers ? [
     onboardingAnswers.name && `Their name is ${onboardingAnswers.name}.`,
     onboardingAnswers.reasons && `They came to Selah for: ${Array.isArray(onboardingAnswers.reasons)?onboardingAnswers.reasons.join(", "):onboardingAnswers.reasons}.`,
@@ -6776,42 +8444,21 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     onboardingAnswers.gender && onboardingAnswers.gender !== "Prefer not to say" && `They identify as: ${onboardingAnswers.gender}.`,
   ].filter(Boolean).join(" ") : "";
 
-  // ── Tiered Memory System ──
-  const buildMemoryContext = () => {
-    if (!sessionHistory || sessionHistory.length === 0) return "";
-    const tierLevel = TIER_LEVELS[tier] || 0;
+  const trialPeakFirst = isTrialActive && sessionCount === 0;
+  const reflectMaxTokens = trialPeakFirst ? 1200 : 900;
 
-    // Foundation: Last 5 session summaries
-    if (tierLevel >= 1) {
-      const recentSessions = sessionHistory.slice(0, 5);
-      const summaries = recentSessions.map((s, i) => {
-        const date = new Date(s.date).toLocaleDateString("en-US", { month:"short", day:"numeric" });
-        return `[${date}] Topic: ${s.category || "Open"}. ${s.insight || ""} ${s.takeaway || ""}`.trim();
-      }).join(" | ");
-
-      // Growth: Add person-level insights
-      if (tierLevel >= 2) {
-        const allCategories = sessionHistory.map(s => s.category).filter(Boolean);
-        const topCategories = [...new Set(allCategories)].slice(0, 5).join(", ");
-        const allInsights = sessionHistory.map(s => s.insight).filter(Boolean).slice(0, 8).join(" ");
-        const growthCtx = `RECURRING THEMES: ${topCategories}. KEY INSIGHTS FROM PAST SESSIONS: ${allInsights}`;
-
-        // Deep: Full portrait with breakthroughs and patterns
-        if (tierLevel >= 3) {
-          const allTakeaways = sessionHistory.map(s => s.takeaway).filter(Boolean).slice(0, 10).join(" ");
-          const allActions = sessionHistory.map(s => s.action).filter(Boolean).slice(0, 8).join(" ");
-          const sessionDates = sessionHistory.map(s => new Date(s.date).toLocaleDateString()).slice(0, 10);
-          const frequency = sessionHistory.length >= 5 ? "regular user" : "newer user";
-          return `\n\nDEEP MEMORY PORTRAIT (${sessionHistory.length} total sessions, ${frequency}): ${growthCtx} BREAKTHROUGHS & TAKEAWAYS: ${allTakeaways} ACTION STEPS THEY'VE COMMITTED TO: ${allActions} Use this portrait to track their growth, reference past breakthroughs, notice patterns, and hold them accountable to commitments they've made. Don't recite this back — let it inform how you speak to them.`;
-        }
-        return `\n\nGROWTH MEMORY (${sessionHistory.length} sessions): ${growthCtx} RECENT SESSIONS: ${summaries} Use these insights to personalize your approach. Reference patterns you notice. Don't recite this back — let it naturally inform the conversation.`;
-      }
-      return `\n\nSESSION MEMORY: Their last ${recentSessions.length} sessions: ${summaries} Use this context to build continuity — reference what they've explored before when relevant.`;
-    }
-    return "";
-  };
-
-  const memoryCtx = buildMemoryContext();
+  const memoryCtx = useMemo(
+    () =>
+      buildReflectMemoryBlock({
+        tier,
+        isTrialActive,
+        sessionHistory,
+        savedReflections,
+        moodHistory,
+        trialPeakFirstSession: trialPeakFirst,
+      }),
+    [tier, isTrialActive, sessionHistory, savedReflections, moodHistory, trialPeakFirst]
+  );
 
   const toneInstruction = {
     direct: "TONE: Be direct, grounded, and honest. Say things like 'What part of that hit you hardest?' and 'You don't have to carry this alone.' Be like a grounded older brother — calm, direct, emotionally literate. Don't over-soften. Get to the point with warmth.",
@@ -6824,7 +8471,19 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
 
   const minorSafety = isMinorUser ? " IMPORTANT: This user is under 18. Keep all content age-appropriate. Never discuss substance use, sexual content, or graphic violence. If they mention self-harm, abuse, or danger, immediately say CRISIS_DETECTED. Encourage them to talk to a trusted adult. Be extra warm, supportive, and encouraging. Use simpler language." : "";
 
-  const sysPrompt=`You are Selah — a faith-rooted clarity companion. Help people collect thoughts, reflect clearly, and move steadily. CRITICAL: You are NOT a therapist, counselor, or medical provider. Never diagnose, prescribe, or provide medical/clinical advice. If someone describes symptoms, encourage them to see a licensed professional. Never claim to replace professional care. ${toneInstruction} ${faithLevel>=2?"Reference scripture naturally when it adds clarity.":"Keep faith references minimal unless user brings it up."} ${sessionCount>=10?"User has done multiple sessions — be slightly more ownership-forward and direct.":"New user — be stabilizing first."} ${seasonalContext ? `SEASONAL CONTEXT: ${seasonalContext} Let this subtly shape the themes and questions you offer — don't announce it, just let it inform the texture of the conversation.` : ""} ${onboardCtx ? `IMPORTANT CONTEXT ABOUT THIS PERSON: ${onboardCtx} Use this context to make your responses more personal and relevant — reference their specific struggles and goals naturally, but never make it feel like you're reading from a file. Let it inform how you speak, not what you quote back.` : ""}${memoryCtx}${minorSafety} Guide: Collect → Clarify → Check distorted thinking → Responsibility → One small move. When closing: say SESSION_COMPLETE then insight line, takeaway line, action line on separate lines. If crisis: say CRISIS_DETECTED only. No bullet points. Max 3 sentences unless they need space. End with a question unless closing.`;
+  const scriptureInReflect = faithLevel >= 2
+    ? " SCRIPTURE IN REFLECT SESSIONS: When a Bible passage truly fits what they have shared, weave it in gently — not preachy. Introduce it softly (e.g. 'This verse came to mind as you shared that…' or 'Something in Scripture echoes what you're describing…'). Quote or paraphrase briefly, then add one or two sentences on why it speaks to their situation — a bridge, not a sermon. Only offer a verse when it genuinely fits; if none does, stay with careful listening."
+    : " Do not quote scripture unless they clearly invite faith or biblical language; keep the space human and grounded first.";
+
+  const sysPrompt=`You are Selah — a faith-rooted clarity companion who listens like a wise, warm, spiritually grounded friend. Help people collect thoughts, reflect clearly, and move steadily — with real depth, not surface platitudes.
+
+CRITICAL: You are NOT a therapist, counselor, or medical provider. Never diagnose, prescribe, or provide medical/clinical advice. If someone describes symptoms, encourage them to see a licensed professional. Never claim to replace professional care.
+
+DEPTH & PRESENCE: Most replies should be thoughtful and full — often roughly 4–8 sentences in the body (longer if they are processing something heavy; shorter if they need air). When they share something vulnerable, slow down: reflect back what you heard in your own words so they feel understood, then invite them deeper with a caring follow-up question. Avoid generic encouragement; be specific to their words. Wonder with them; don't rush to fix. Show that you're tracking — ask follow-ups that open the next layer. Embed one clear question in warm prose unless you are closing with SESSION_COMPLETE.${trialPeakFirst ? " For this conversation, lean into unusual depth and specificity — the presence of someone who truly has time for them. Never name tiers, trials, or 'first session'." : ""}
+
+WISE COMPANION: Sound like someone who has sat with hard things and paid attention. Be spiritually rich without performing. ${toneInstruction} ${faithLevel>=2?"Let faith and wisdom arise naturally from the conversation.":"Keep faith language minimal unless they lead with it."} ${sessionCount>=10?"They have done many sessions — you can be somewhat more ownership-forward and direct.":"They may be newer — prioritize steadiness and safety first."} ${seasonalContext ? `SEASONAL CONTEXT: ${seasonalContext} Let this subtly shape the themes and questions you offer — don't announce it, just let it inform the texture of the conversation.` : ""} ${onboardCtx ? `IMPORTANT CONTEXT ABOUT THIS PERSON: ${onboardCtx} Use this context to make your responses more personal and relevant — reference their specific struggles and goals naturally, but never make it feel like you're reading from a file. Let it inform how you speak, not what you quote back.` : ""}${memoryCtx ? (trialPeakFirst ? "LONG-TERM MEMORY: The SELAH MEMORY block below matches Deep-tier depth; there is no prior session history — personalize from onboarding and today's words only. Never mention trials, previews, or tiers. Never read it back as a list or dossier. " : "LONG-TERM MEMORY: When a SELAH MEMORY block appears below, it comes from their real reflection history (Foundation+ paid only — not free or trial). Use it to personalize every response; never read it back as a list or dossier. ") : ""}${memoryCtx}${minorSafety}${scriptureInReflect}
+
+Guide: Collect → Clarify → Check distorted thinking → Responsibility → One small move. When closing: say SESSION_COMPLETE then insight line, takeaway line, action line on separate lines. If crisis: say CRISIS_DETECTED only. No bullet points. End with a question unless you are closing with SESSION_COMPLETE.`;
 
   const startSession=async()=>{
     setPhase("session"); setLoading(true);
@@ -6834,7 +8493,7 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     try {
       const r=await fetch("/api/chat",{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:400,
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:reflectMaxTokens,
           system:sysPrompt,messages:histRef.current})});
       const d=await r.json();
       if(d.error) throw new Error(d.error?.message||"API error");
@@ -6849,6 +8508,8 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
 
   const send=async()=>{
     const t=input.trim(); if(!t||loading)return;
+    try { window.speechSynthesis?.cancel(); } catch(e) {}
+    setTtsPlayingId(null);
     setInput("");
     if(isCrisis(t)){setCrisis(true);return;}
     const userMsg={role:"user",content:t,time:now(),id:Date.now()};
@@ -6861,7 +8522,7 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     try {
       const r=await fetch("/api/chat",{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:400,
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:reflectMaxTokens,
           system:sysPrompt,messages:histRef.current})});
       const d=await r.json();
       if(d.error) throw new Error(d.error?.message||"API error");
@@ -6872,7 +8533,7 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
         const sum={insight:parts[0]||"",takeaway:parts[1]||"",action:parts[2]||""};
         setSummary(sum);
         setPhase("complete");
-        onSessionComplete({
+        const sessionPayload={
           id: Date.now(),
           date: new Date().toISOString(),
           category: catData?.label || "Open Reflection",
@@ -6881,7 +8542,14 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
           takeaway: sum.takeaway,
           action: sum.action,
           messageCount: msgs.length + 1,
-        });
+        };
+        const transcript = histRef.current
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .filter((m) => !(m.role === "user" && String(m.content).startsWith("[Bring this")))
+          .map((m) => ({ role: m.role, content: m.content }));
+        const closingOnly = reply.replace("SESSION_COMPLETE", "").trim();
+        if (closingOnly) transcript.push({ role: "assistant", content: closingOnly });
+        onSessionComplete(sessionPayload, transcript);
         return;
       }
       const aMsg={role:"assistant",content:reply,time:now(),id:Date.now()+1};
@@ -6891,7 +8559,64 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     } finally { setLoading(false); setTimeout(()=>inputRef.current?.focus(),100); }
   };
 
-  const reset=()=>{setPhase("entry");setCat(null);setFreeText("");setMsgs([]);histRef.current=[];setDepth(0);};
+  const reset=()=>{
+    try { window.speechSynthesis?.cancel(); } catch(e) {}
+    setTtsPlayingId(null);
+    setPhase("entry");setCat(null);setFreeText("");setMsgs([]);histRef.current=[];setDepth(0);setPastDetail(null);
+  };
+
+  if (phase === "entry" && pastDetail) {
+    const dt = new Date(pastDetail.date);
+    const dateStr = dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    return (
+      <div style={{ minHeight: "100vh", background: C.bgPrimary, fontFamily: font, padding: "40px 20px 100px", boxSizing: "border-box" }}>
+        <div style={{ maxWidth: "480px", margin: "0 auto" }}>
+          <button type="button" onClick={() => setPastDetail(null)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, fontSize: "18px", marginBottom: "20px", padding: "4px 8px 4px 0" }}>←</button>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "12px", marginBottom: "16px" }}>
+            <div style={{ width: "44px", height: "44px", borderRadius: "50%", background: `${C.accent}22`, border: `1px solid ${C.accent}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px", flexShrink: 0 }}>{pastDetail.categoryIcon || "✦"}</div>
+            <div style={{ flex: 1 }}>
+              <p style={{ color: C.textMuted, fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", fontStyle: "italic", margin: 0 }}>{dateStr}</p>
+              <h1 style={{ color: C.textPrimary, fontSize: "clamp(18px,4vw,22px)", fontWeight: "normal", margin: "6px 0 0", lineHeight: 1.35 }}>{pastDetail.category || "Reflection"}</h1>
+            </div>
+          </div>
+          {pastDetail.keyThemes && pastDetail.keyThemes.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "20px" }}>
+              {pastDetail.keyThemes.map((th, i) => (
+                <span key={i} style={{ fontSize: "10px", letterSpacing: "0.5px", padding: "5px 10px", borderRadius: "20px", background: `${C.accent}14`, color: C.accent, fontStyle: "italic", border: `1px solid ${C.accent}28` }}>{th}</span>
+              ))}
+            </div>
+          )}
+          <div style={{ background: C.bgSecondary, borderRadius: "12px", border: `1px solid ${C.border}`, padding: "18px", marginBottom: "14px" }}>
+            <p style={{ color: C.textMuted, fontSize: "9px", letterSpacing: "2.5px", textTransform: "uppercase", fontStyle: "italic", margin: "0 0 10px" }}>Summary</p>
+            <p style={{ color: C.textSoft, fontSize: "14px", fontStyle: "italic", lineHeight: 1.85, margin: 0, whiteSpace: "pre-wrap" }}>{pastDetail.aiSummary || "—"}</p>
+          </div>
+          {(pastDetail.insight || pastDetail.takeaway || pastDetail.action) && (
+            <div style={{ marginBottom: "20px" }}>
+              {pastDetail.insight ? (
+                <div style={{ background: C.bgSecondary, borderRadius: "10px", padding: "14px", marginBottom: "10px", border: `1px solid ${C.accent}33`, textAlign: "left" }}>
+                  <p style={{ color: C.accent, fontSize: "9px", letterSpacing: "2.5px", textTransform: "uppercase", fontStyle: "italic", margin: "0 0 6px" }}>Insight</p>
+                  <p style={{ color: C.textSoft, fontSize: "13px", fontStyle: "italic", lineHeight: 1.8, margin: 0 }}>{pastDetail.insight}</p>
+                </div>
+              ) : null}
+              {pastDetail.takeaway ? (
+                <div style={{ background: C.bgSecondary, borderRadius: "10px", padding: "14px", marginBottom: "10px", border: `1px solid ${C.amber}33`, textAlign: "left" }}>
+                  <p style={{ color: C.amber, fontSize: "9px", letterSpacing: "2.5px", textTransform: "uppercase", fontStyle: "italic", margin: "0 0 6px" }}>Takeaway</p>
+                  <p style={{ color: C.textSoft, fontSize: "13px", fontStyle: "italic", lineHeight: 1.8, margin: 0 }}>{pastDetail.takeaway}</p>
+                </div>
+              ) : null}
+              {pastDetail.action ? (
+                <div style={{ background: C.bgSecondary, borderRadius: "10px", padding: "14px", border: `1px solid ${C.terra}33`, textAlign: "left" }}>
+                  <p style={{ color: C.terra, fontSize: "9px", letterSpacing: "2.5px", textTransform: "uppercase", fontStyle: "italic", margin: "0 0 6px" }}>One small move</p>
+                  <p style={{ color: C.textSoft, fontSize: "13px", fontStyle: "italic", lineHeight: 1.8, margin: 0 }}>{pastDetail.action}</p>
+                </div>
+              ) : null}
+            </div>
+          )}
+          <p style={{ color: C.textMuted, fontSize: "10px", fontStyle: "italic", textAlign: "center", margin: 0 }}>Saved on this device and in your cloud backup when signed in.</p>
+        </div>
+      </div>
+    );
+  }
 
   if(phase==="complete") return (
     <div style={{ minHeight:"100vh",background:C.bgPrimary,fontFamily:font,
@@ -6971,7 +8696,7 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
             action:"Take one slow breath before the day continues."};
           setSummary(sum);
           setPhase("complete");
-          onSessionComplete({
+          const sessionPayload={
             id: Date.now(),
             date: new Date().toISOString(),
             category: catData?.label || "Open Reflection",
@@ -6980,7 +8705,12 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
             takeaway: sum.takeaway,
             action: sum.action,
             messageCount: msgs.length,
-          });
+          };
+          const transcript = histRef.current
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .filter((m) => !(m.role === "user" && String(m.content).startsWith("[Bring this")))
+            .map((m) => ({ role: m.role, content: m.content }));
+          onSessionComplete(sessionPayload, transcript);
         }} style={{ background:"none",border:`1px solid ${C.border}`,borderRadius:"3px",
           color:C.textMuted,fontSize:"9px",letterSpacing:"2px",textTransform:"uppercase",
           padding:"7px 12px",cursor:"pointer",fontFamily:font,fontStyle:"italic" }}>
@@ -7010,8 +8740,28 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
                   lineHeight:"1.8",margin:0,fontStyle:"italic",whiteSpace:"pre-wrap" }}>
                   {msg.content}
                 </p>
-                <p style={{ color:isUser?"rgba(255,255,255,0.5)":C.textMuted,
-                  fontSize:"9px",margin:"4px 0 0",textAlign:"right" }}>{msg.time}</p>
+                {isGrowthPlus && !isUser && synthSupported ? (
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"6px", gap:"8px" }}>
+                    <button
+                      type="button"
+                      onClick={() => onTtsToggle(msg.id, msg.content)}
+                      title={ttsPlayingId === msg.id ? "Stop" : "Read aloud"}
+                      aria-label={ttsPlayingId === msg.id ? "Stop reading" : "Read aloud"}
+                      style={{
+                        width:"26px", height:"26px", borderRadius:"6px", padding:0, margin:0, flexShrink:0,
+                        background: ttsPlayingId === msg.id ? `${C.accent}18` : "transparent",
+                        border: `1px solid ${ttsPlayingId === msg.id ? C.accent : C.border}`,
+                        color: ttsPlayingId === msg.id ? C.accent : C.textMuted,
+                        fontSize:"11px", lineHeight:1, cursor:"pointer", fontFamily:font,
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                      }}
+                    >{ttsPlayingId === msg.id ? "■" : "▶"}</button>
+                    <p style={{ color:C.textMuted, fontSize:"9px", margin:0, textAlign:"right", flex:1 }}>{msg.time}</p>
+                  </div>
+                ) : (
+                  <p style={{ color:isUser?"rgba(255,255,255,0.5)":C.textMuted,
+                    fontSize:"9px",margin:"4px 0 0",textAlign:"right" }}>{msg.time}</p>
+                )}
               </div>
               {isUser&&<div style={{ width:"28px",height:"28px",borderRadius:"50%",
                 background:`${C.amber}22`,display:"flex",alignItems:"center",
@@ -7131,6 +8881,55 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
           lineHeight:"1.8",margin:"0 0 24px" }}>
           Choose a focus or write freely. Selah helps you collect and move clearly.
         </p>
+
+        <div style={{ marginBottom:"26px" }}>
+          <Label text="Past Reflections" color={C.accent} font={font}/>
+          {!canSavePastReflections ? (
+            <div style={{ marginTop:"12px", background:C.bgSecondary, borderRadius:"10px", border:`1px solid ${C.border}`,
+              padding:"14px 16px", display:"flex", alignItems:"center", gap:"12px", flexWrap:"wrap" }}>
+              <span style={{ fontSize:"20px", lineHeight:1 }}>🔒</span>
+              <p style={{ margin:0, color:C.textMuted, fontSize:"12px", fontStyle:"italic", lineHeight:1.65, flex:1, minWidth:"200px" }}>
+                Foundation+ to save reflections
+              </p>
+              {onUpgrade && (
+                <button type="button" onClick={onUpgrade} style={{
+                  background:C.accent, border:"none", borderRadius:"3px", color:"#fff", fontSize:"9px", letterSpacing:"2px",
+                  textTransform:"uppercase", padding:"10px 16px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>
+                  View plans
+                </button>
+              )}
+            </div>
+          ) : savedReflections.length === 0 ? (
+            <p style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic", lineHeight:1.75, margin:"12px 0 0" }}>
+              When you finish a session, a short summary is saved here so you can return to what you explored.
+            </p>
+          ) : (
+            <div style={{ marginTop:"12px", maxHeight:"260px", overflowY:"auto", display:"flex", flexDirection:"column", gap:"10px", paddingRight:"4px" }}>
+              {savedReflections.map((item) => {
+                const d = new Date(item.date);
+                const shortDate = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+                const preview = (item.keyThemes && item.keyThemes[0]) || item.category || "Reflection";
+                return (
+                  <button key={item.id} type="button" onClick={()=>setPastDetail(item)} style={{
+                    width:"100%", textAlign:"left", cursor:"pointer", background:C.bgSecondary, border:`1px solid ${C.border}`,
+                    borderRadius:"10px", padding:"14px 16px", fontFamily:font, transition:"border-color 0.2s ease, background 0.2s ease" }}
+                    onMouseEnter={(e)=>{ e.currentTarget.style.borderColor=C.accent+"55"; e.currentTarget.style.background=`${C.accent}08`; }}
+                    onMouseLeave={(e)=>{ e.currentTarget.style.borderColor=C.border; e.currentTarget.style.background=C.bgSecondary; }}>
+                    <div style={{ display:"flex", alignItems:"flex-start", gap:"10px" }}>
+                      <span style={{ fontSize:"18px", flexShrink:0 }}>{item.categoryIcon || "✦"}</span>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <p style={{ margin:0, color:C.textPrimary, fontSize:"13px", fontStyle:"italic", lineHeight:1.4 }}>{item.category || "Reflection"}</p>
+                        <p style={{ margin:"4px 0 0", color:C.textMuted, fontSize:"11px", fontStyle:"italic" }}>{shortDate} · {preview}</p>
+                      </div>
+                      <span style={{ color:C.textMuted, fontSize:"14px", flexShrink:0 }}>→</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"10px",marginBottom:"20px" }}>
           {allCats.map((c,i)=>{
             const sel=cat===c.id;
@@ -7199,9 +8998,626 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
 }
 
 // ═══════════════════════════════════════════════════════
+// GUIDED PRAYER — structured (Foundation & below) or AI (Growth+)
+// ═══════════════════════════════════════════════════════
+const GUIDED_PRAYER_STEPS = [
+  { id:"opening", title:"Opening", subtitle:"Stillness before God",
+    prompt:"Take a breath. What do you want to bring into this prayer — a worry, a hope, or simply your presence? Write freely; there is no wrong way to begin." },
+  { id:"thanks", title:"Thanksgiving", subtitle:"Gratitude",
+    prompt:"What are you thankful for today — even something small? Name the gifts you’ve noticed, or the grace you’ve received." },
+  { id:"confession", title:"Confession", subtitle:"Honesty and mercy",
+    prompt:"Where do you sense you need forgiveness, fresh mercy, or a new start? You don’t have to be polished — God already knows your heart." },
+  { id:"intercession", title:"Intercession", subtitle:"Others & yourself",
+    prompt:"Who or what needs God’s care right now? Lift up the people, situations, or burdens you carry — including your own." },
+  { id:"closing", title:"Closing", subtitle:"Trust and rest",
+    prompt:"How do you want to leave this prayer? A word of trust, a verse you love, or a simple amen — seal this time in your own words." },
+];
+
+const EVENING_PRAYER_STEPS = [
+  { id:"reflection", title:"Reflection", subtitle:"Gratitude for today",
+    prompt:"What happened today that is worth giving thanks for — a moment, a person, a small kindness, or a quiet grace? Nothing is too ordinary for God’s attention." },
+  { id:"release", title:"Release", subtitle:"Letting go",
+    prompt:"What are you carrying that you need to let go of tonight — worry, regret, a burden too heavy to hold until morning? Name it here and entrust it to God’s care." },
+  { id:"intercession", title:"Intercession", subtitle:"Praying for others",
+    prompt:"Who are you praying for tonight — someone you love, someone who struggles, a stranger, or yourself? Lift them simply and honestly before God." },
+  { id:"rest", title:"Rest", subtitle:"Peace and surrender",
+    prompt:"A closing prayer of peace and surrender. What do you want to place in God’s hands before you sleep? A word, a silence, or a simple amen is enough." },
+];
+
+function GuidedPrayerStructured({ C, font, setScreen, onDone, onBackToMenu }) {
+  const [step, setStep] = useState(0);
+  const [text, setText] = useState("");
+  const [answers, setAnswers] = useState(() => GUIDED_PRAYER_STEPS.map(() => ""));
+  const s = GUIDED_PRAYER_STEPS[step];
+  const isLast = step === GUIDED_PRAYER_STEPS.length - 1;
+
+  useEffect(() => {
+    setText(answers[step] || "");
+  }, [step, answers]);
+
+  const saveAndNext = () => {
+    setAnswers((prev) => {
+      const n = [...prev];
+      n[step] = text;
+      return n;
+    });
+    if (isLast) {
+      onDone();
+      return;
+    }
+    setStep((x) => x + 1);
+  };
+
+  const goBack = () => {
+    if (step === 0) return;
+    setAnswers((prev) => {
+      const n = [...prev];
+      n[step] = text;
+      return n;
+    });
+    setStep((x) => x - 1);
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
+      padding:"24px 20px 120px", boxSizing:"border-box" }}>
+      <div style={{ maxWidth:"480px", margin:"0 auto" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"20px" }}>
+          <button type="button" onClick={() => (onBackToMenu ? onBackToMenu() : setScreen("home"))} style={{ background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"20px", padding:"4px 8px 4px 0" }}>←</button>
+          <WaveLogo size={24} color={C.sage}/>
+          <div style={{ flex:1 }}>
+            <p style={{ color:C.sage, fontSize:"9px", letterSpacing:"3px", textTransform:"uppercase", fontStyle:"italic", margin:0 }}>Guided Prayer</p>
+            <p style={{ color:C.textMuted, fontSize:"11px", margin:"2px 0 0" }}>Structured · Peaceful · With God</p>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:"6px", marginBottom:"20px" }}>
+          {GUIDED_PRAYER_STEPS.map((_, i) => (
+            <div key={_.id} style={{ flex:1, height:"3px", borderRadius:"2px", background:i<=step?C.sage:C.bgSecondary, transition:"background 0.3s ease" }}/>
+          ))}
+        </div>
+        <Label text={s.title} color={C.sage} font={font}/>
+        <p style={{ color:C.amber, fontSize:"11px", fontStyle:"italic", margin:"0 0 16px" }}>{s.subtitle}</p>
+        <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 20px" }}>
+          {s.prompt}
+        </p>
+        <div style={{ background:C.bgSecondary, borderRadius:"12px", border:`1.5px solid ${C.border}`, padding:"16px 18px", marginBottom:"20px" }}>
+          <textarea value={text} onChange={(e)=>setText(e.target.value)}
+            placeholder="Write your prayer here…"
+            rows={8}
+            style={{ width:"100%", boxSizing:"border-box", background:"none", border:"none", outline:"none",
+              color:C.textPrimary, fontSize:"14px", fontStyle:"italic", fontFamily:font, lineHeight:"1.85", resize:"vertical", minHeight:"160px" }}/>
+        </div>
+        <div style={{ display:"flex", gap:"10px" }}>
+          {step > 0 && (
+            <button type="button" onClick={goBack} style={{ flex:1, background:C.bgSecondary, border:`1px solid ${C.border}`, borderRadius:"3px",
+              color:C.textSoft, fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", padding:"14px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>
+              Back
+            </button>
+          )}
+          <button type="button" onClick={saveAndNext} style={{ flex:1, background:C.sage, border:"none", borderRadius:"3px", color:"#fff",
+            fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", padding:"14px", cursor:"pointer", fontFamily:font, fontStyle:"italic",
+            boxShadow:`0 2px 12px ${C.sage}33` }}>
+            {isLast ? "Finish" : "Next"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EveningPrayerStructured({ C, font, setScreen, onDone, onBackToMenu }) {
+  const [phase, setPhase] = useState("steps");
+  const [step, setStep] = useState(0);
+  const [text, setText] = useState("");
+  const [answers, setAnswers] = useState(() => EVENING_PRAYER_STEPS.map(() => ""));
+  const s = EVENING_PRAYER_STEPS[step];
+  const isLast = step === EVENING_PRAYER_STEPS.length - 1;
+
+  useEffect(() => {
+    setText(answers[step] || "");
+  }, [step, answers]);
+
+  const saveAndNext = () => {
+    setAnswers((prev) => {
+      const n = [...prev];
+      n[step] = text;
+      return n;
+    });
+    if (isLast) {
+      onDone();
+      setPhase("complete");
+      return;
+    }
+    setStep((x) => x + 1);
+  };
+
+  const goBack = () => {
+    if (step === 0) return;
+    setAnswers((prev) => {
+      const n = [...prev];
+      n[step] = text;
+      return n;
+    });
+    setStep((x) => x - 1);
+  };
+
+  if (phase === "complete") {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bgPrimary, fontFamily: font, display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "center", padding: "40px 24px", textAlign: "center", boxSizing: "border-box" }}>
+        <div style={{ maxWidth: "420px", width: "100%" }}>
+          <div style={{ fontSize: "36px", marginBottom: "12px" }}>🌙</div>
+          <p style={{ color: C.accent, fontSize: "10px", letterSpacing: "3px", textTransform: "uppercase", fontStyle: "italic", margin: "0 0 12px" }}>Evening Prayer</p>
+          <div style={{ background: C.bgSecondary, borderRadius: "12px", padding: "20px", border: `1px solid ${C.accent}33`, textAlign: "left", marginBottom: "24px" }}>
+            <p style={{ color: C.textSoft, fontSize: "14px", fontStyle: "italic", lineHeight: "1.85", margin: 0 }}>
+              May the peace of God — deeper than noise, wider than worry — settle over you tonight. What you’ve poured out here is heard; you are held, and you can sleep in that mercy.
+            </p>
+          </div>
+          <h1 style={{ color: C.textPrimary, fontSize: "clamp(22px,5vw,28px)", fontWeight: "normal", margin: "0 0 12px", lineHeight: "1.35", fontStyle: "italic" }}>
+            Rest well
+          </h1>
+          <p style={{ color: C.textMuted, fontSize: "13px", fontStyle: "italic", lineHeight: "1.75", margin: "0 0 28px" }}>
+            Until morning, friend.
+          </p>
+          <button type="button" onClick={() => setScreen("home")} style={{ background: C.accent, border: "none", borderRadius: "3px", color: "#fff", fontSize: "10px", letterSpacing: "3px",
+            textTransform: "uppercase", padding: "14px 32px", cursor: "pointer", fontFamily: font, fontStyle: "italic", boxShadow: `0 2px 12px ${C.accent}33` }}>
+            Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bgPrimary, fontFamily: font,
+      padding: "24px 20px 120px", boxSizing: "border-box" }}>
+      <div style={{ maxWidth: "480px", margin: "0 auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+          <button type="button" onClick={() => (onBackToMenu ? onBackToMenu() : setScreen("home"))} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, fontSize: "20px", padding: "4px 8px 4px 0" }}>←</button>
+          <WaveLogo size={24} color={C.accent}/>
+          <div style={{ flex: 1 }}>
+            <p style={{ color: C.accent, fontSize: "9px", letterSpacing: "3px", textTransform: "uppercase", fontStyle: "italic", margin: 0 }}>Evening Prayer</p>
+            <p style={{ color: C.textMuted, fontSize: "11px", margin: "2px 0 0" }}>Wind down · Night · With God</p>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "6px", marginBottom: "20px" }}>
+          {EVENING_PRAYER_STEPS.map((st, i) => (
+            <div key={st.id} style={{ flex: 1, height: "3px", borderRadius: "2px", background: i <= step ? C.accent : C.bgSecondary, transition: "background 0.3s ease" }}/>
+          ))}
+        </div>
+        <Label text={s.title} color={C.accent} font={font}/>
+        <p style={{ color: C.amber, fontSize: "11px", fontStyle: "italic", margin: "0 0 16px" }}>{s.subtitle}</p>
+        <p style={{ color: C.textSoft, fontSize: "14px", fontStyle: "italic", lineHeight: "1.85", margin: "0 0 20px" }}>
+          {s.prompt}
+        </p>
+        <div style={{ background: C.bgSecondary, borderRadius: "12px", border: `1.5px solid ${C.border}`, padding: "16px 18px", marginBottom: "20px" }}>
+          <textarea value={text} onChange={(e) => setText(e.target.value)}
+            placeholder="Write your prayer here…"
+            rows={8}
+            style={{ width: "100%", boxSizing: "border-box", background: "none", border: "none", outline: "none",
+              color: C.textPrimary, fontSize: "14px", fontStyle: "italic", fontFamily: font, lineHeight: "1.85", resize: "vertical", minHeight: "160px" }}/>
+        </div>
+        <div style={{ display: "flex", gap: "10px" }}>
+          {step > 0 && (
+            <button type="button" onClick={goBack} style={{ flex: 1, background: C.bgSecondary, border: `1px solid ${C.border}`, borderRadius: "3px",
+              color: C.textSoft, fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", padding: "14px", cursor: "pointer", fontFamily: font, fontStyle: "italic" }}>
+              Back
+            </button>
+          )}
+          <button type="button" onClick={saveAndNext} style={{ flex: 1, background: C.accent, border: "none", borderRadius: "3px", color: "#fff",
+            fontSize: "10px", letterSpacing: "3px", textTransform: "uppercase", padding: "14px", cursor: "pointer", fontFamily: font, fontStyle: "italic",
+            boxShadow: `0 2px 12px ${C.accent}33` }}>
+            {isLast ? "Finish" : "Next"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GuidedPrayerAISession({ C, font, setScreen, faithLevel, userName, onboardingAnswers, isMinorUser, tone, onComplete, onBackToMenu, tier }) {
+  const [phase, setPhase] = useState("intro");
+  const [msgs, setMsgs] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [crisis, setCrisis] = useState(false);
+  const [depth, setDepth] = useState(0);
+  const [blessing, setBlessing] = useState("");
+  const histRef = useRef([]);
+  const bottomRef = useRef(null);
+  const inputRef = useRef(null);
+  const isGrowthPlus = (TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth;
+  const [ttsPlayingId, setTtsPlayingId] = useState(null);
+  const synthSupported = typeof window !== "undefined" && !!window.speechSynthesis;
+  const now = () => new Date().toLocaleTimeString("en-US",{ hour:"numeric", minute:"2-digit" });
+
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [msgs, loading]);
+
+  useEffect(() => {
+    if (!synthSupported) return undefined;
+    const synth = window.speechSynthesis;
+    const primeVoices = () => { try { pickWarmCalmVoice(); } catch (e) {} };
+    primeVoices();
+    synth.addEventListener("voiceschanged", primeVoices);
+    return () => {
+      synth.removeEventListener("voiceschanged", primeVoices);
+      try { synth.cancel(); } catch (e) {}
+    };
+  }, [synthSupported]);
+
+  const speakTts = (messageId, rawText) => {
+    if (!synthSupported) return;
+    const clean = stripTextForSpeech(rawText);
+    if (!clean) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(clean);
+    u.rate = 0.93;
+    u.pitch = 0.96;
+    const voice = pickWarmCalmVoice();
+    if (voice) u.voice = voice;
+    u.onend = () => setTtsPlayingId(null);
+    u.onerror = () => setTtsPlayingId(null);
+    setTtsPlayingId(messageId);
+    window.speechSynthesis.speak(u);
+  };
+
+  const onTtsToggle = (messageId, rawText) => {
+    if (!synthSupported || !isGrowthPlus) return;
+    if (ttsPlayingId === messageId) {
+      window.speechSynthesis.cancel();
+      setTtsPlayingId(null);
+    } else {
+      speakTts(messageId, rawText);
+    }
+  };
+
+  const onboardCtx = onboardingAnswers ? [
+    onboardingAnswers.name && `Their name is ${onboardingAnswers.name}.`,
+    onboardingAnswers.reasons && `They came to Selah for: ${Array.isArray(onboardingAnswers.reasons)?onboardingAnswers.reasons.join(", "):onboardingAnswers.reasons}.`,
+  ].filter(Boolean).join(" ") : "";
+
+  const toneLine = {
+    direct: "Be clear and grounded, not flowery.",
+    warm: "Be gentle, patient, and nurturing.",
+    structured: "Keep a gentle structure — one step at a time.",
+    spiritual: "Weave scripture and faith naturally.",
+    mentor: "Speak with quiet wisdom and honesty.",
+    coach: "Encourage forward movement without harshness.",
+  }[tone] || "Be warm and present.";
+
+  const minorSafety = isMinorUser ? " User is under 18: age-appropriate language only. If they mention self-harm or danger, respond with CRISIS_DETECTED only." : "";
+
+  const goBackNav = () => (onBackToMenu ? onBackToMenu() : setScreen("home"));
+
+  const sysPrompt = `You are Selah's companion for prayer — not a therapist or pastor. You gently lead a conversational prayer with warmth, spiritual presence, and real attentiveness${faithLevel>=2?"; you may draw on Scripture or sacred language when it fits — introduce verses gently, as a friend sharing what came to mind, not as a lecture." : "; keep faith language accessible and optional."} ${toneLine}
+${onboardCtx ? `Context: ${onboardCtx}` : ""}
+Flow: (1) welcome and open the heart — what's on their mind; (2) thanksgiving; (3) confession or honesty — gently, without shame; (4) intercession for others and themselves; (5) when the prayer feels complete, close with a short blessing.
+DEPTH: Let each turn breathe — usually about 3–6 sentences so they feel accompanied, not rushed. Briefly reflect back what you heard before moving on. Ask one gentle question at a time. Sound like a wise, listening companion who truly hears them. Never diagnose or give clinical advice.${minorSafety}
+When the prayer is truly complete and you have offered a blessing, end your reply with PRAYER_COMPLETE on its own line, then a final blessing paragraph (2–4 sentences) on the following lines.`;
+
+  const beginChat = async () => {
+    setPhase("session");
+    setLoading(true);
+    const firstUser = `${userName||"Someone"} would like to begin a guided prayer time. Please open with a warm invitation and your first gentle question.`;
+    histRef.current = [{ role:"user", content: firstUser }];
+    try {
+      const r = await fetch("/api/chat", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:700, system: sysPrompt, messages: histRef.current }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error?.message||"API error");
+      const reply = d.content.map((b)=>b.text||"").join("").trim();
+      const m = { role:"assistant", content: reply, time: now(), id: Date.now() };
+      setMsgs([m]);
+      histRef.current = [{ role:"user", content: firstUser }, { role:"assistant", content: reply }];
+    } catch {
+      const fallback = "I'm here with you. What's weighing on your heart as we enter this prayer?";
+      setMsgs([{ role:"assistant", content: fallback, time: now(), id: Date.now() }]);
+      histRef.current = [{ role:"user", content: firstUser }, { role:"assistant", content: fallback }];
+    } finally {
+      setLoading(false);
+      setTimeout(()=>inputRef.current?.focus(), 200);
+    }
+  };
+
+  const send = async () => {
+    const t = input.trim();
+    if (!t || loading) return;
+    try { window.speechSynthesis?.cancel(); } catch(e) {}
+    setTtsPlayingId(null);
+    setInput("");
+    if (isCrisis(t)) { setCrisis(true); return; }
+    setMsgs((m)=>[...m, { role:"user", content: t, time: now(), id: Date.now() }]);
+    histRef.current = [...histRef.current, { role:"user", content: t }];
+    setLoading(true);
+    setDepth((d)=>d+1);
+    if (depth >= 10) {
+      histRef.current = [...histRef.current, { role:"user", content:"[Bring this prayer to a close with PRAYER_COMPLETE and a blessing when ready.]" }];
+    }
+    try {
+      const r = await fetch("/api/chat", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:700, system: sysPrompt, messages: histRef.current }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error?.message||"API error");
+      const reply = d.content.map((b)=>b.text||"").join("").trim();
+      if (reply.includes("CRISIS_DETECTED")) { setCrisis(true); setLoading(false); return; }
+      if (reply.includes("PRAYER_COMPLETE")) {
+        const idx = reply.indexOf("PRAYER_COMPLETE");
+        const rest = reply.slice(idx + "PRAYER_COMPLETE".length).trim();
+        const blessingText = rest.split("\n").filter(Boolean).join("\n\n") || rest || "Go in peace.";
+        setBlessing(blessingText);
+        setPhase("complete");
+        onComplete();
+        return;
+      }
+      const aMsg = { role:"assistant", content: reply, time: now(), id: Date.now()+1 };
+      setMsgs((m)=>[...m, aMsg]);
+      histRef.current = [...histRef.current, { role:"assistant", content: reply }];
+    } catch {
+      setMsgs((m)=>[...m, { role:"assistant", content:"I'm still here. Take your time — when you're ready, share what's on your heart.", time: now(), id: Date.now()+1 }]);
+    } finally {
+      setLoading(false);
+      setTimeout(()=>inputRef.current?.focus(), 100);
+    }
+  };
+
+  if (phase === "intro") {
+    return (
+      <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font, padding:"40px 24px 40px", boxSizing:"border-box" }}>
+        <div style={{ maxWidth:"440px", margin:"0 auto", textAlign:"center" }}>
+          <button type="button" onClick={goBackNav} style={{ background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"20px", padding:"4px", position:"absolute", left:20, top:20 }}>←</button>
+          <div style={{ fontSize:"36px", marginBottom:"16px" }}>🕊️</div>
+          <Label text="Guided Prayer" color={C.sage} font={font}/>
+          <h1 style={{ color:C.textPrimary, fontSize:"clamp(20px,5vw,26px)", fontWeight:"normal", margin:"12px 0 16px", lineHeight:"1.4" }}>
+            AI-guided prayer
+          </h1>
+          <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 28px" }}>
+            Selah will walk with you through gratitude, honesty, intercession, and blessing — at your pace, in a warm voice.
+          </p>
+          <button type="button" onClick={beginChat} style={{ background:C.sage, border:"none", borderRadius:"3px", color:"#fff", fontSize:"10px", letterSpacing:"3px",
+            textTransform:"uppercase", padding:"16px 40px", cursor:"pointer", fontFamily:font, fontStyle:"italic", boxShadow:`0 2px 12px ${C.sage}33` }}>
+            Begin prayer
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "complete") {
+    return (
+      <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font, display:"flex", flexDirection:"column", alignItems:"center",
+        justifyContent:"center", padding:"40px 24px", textAlign:"center" }}>
+        <div style={{ maxWidth:"420px", width:"100%" }}>
+          <WaveLogo size={36} color={C.sage}/>
+          <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", fontStyle:"italic", margin:"16px 0 8px" }}>Amen</p>
+          <h1 style={{ color:C.textPrimary, fontSize:"clamp(18px,4vw,24px)", fontWeight:"normal", margin:"0 0 20px", lineHeight:"1.45" }}>
+            Peace be with you.
+          </h1>
+          {blessing && (
+            <div style={{ background:C.bgSecondary, borderRadius:"12px", padding:"20px", border:`1px solid ${C.sage}33`, textAlign:"left", marginBottom:"28px" }}>
+              <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic", lineHeight:"1.85", margin:0, whiteSpace:"pre-wrap" }}>{blessing}</p>
+            </div>
+          )}
+          <div style={{ display:"flex", gap:"10px", justifyContent:"center" }}>
+            <button type="button" onClick={()=>setScreen("home")} style={{ background:C.bgSecondary, border:`1px solid ${C.border}`, borderRadius:"3px", color:C.textSoft,
+              fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", padding:"14px 24px", cursor:"pointer", fontFamily:font }}>Home</button>
+            <button type="button" onClick={()=>{ setPhase("intro"); setMsgs([]); setInput(""); setDepth(0); setBlessing(""); histRef.current=[]; }} style={{ background:C.sage, border:"none", borderRadius:"3px", color:"#fff",
+              fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", padding:"14px 24px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>
+              Pray again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ height:"100vh", background:C.bgPrimary, fontFamily:font, display:"flex", flexDirection:"column" }}>
+      <div style={{ background:C.bgPrimary, borderBottom:`1px solid ${C.border}`, padding:"14px 14px 12px", display:"flex", alignItems:"center", gap:"10px", flexShrink:0 }}>
+        <button type="button" onClick={goBackNav} style={{ background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"18px", padding:"4px 8px 4px 0" }}>←</button>
+        <span style={{ fontSize:"22px" }}>🕊️</span>
+        <div style={{ flex:1 }}>
+          <h2 style={{ color:C.textPrimary, fontSize:"18px", fontWeight:"normal", margin:0 }}>Guided Prayer</h2>
+          <p style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", fontStyle:"italic", margin:"2px 0 0" }}>Growth · With you</p>
+        </div>
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:"16px 16px 12px" }}>
+        <p style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic", textAlign:"center", marginBottom:"20px" }}>
+          Speak freely — this is prayer, not performance.
+        </p>
+        {msgs.map((msg,i)=>{
+          const isUser = msg.role=== "user";
+          return (
+            <div key={msg.id||i} style={{ display:"flex", justifyContent:isUser?"flex-end":"flex-start", marginBottom:"14px" }}>
+              {!isUser && <span style={{ fontSize:"20px", marginRight:"8px",marginTop:"2px" }}>🕊️</span>}
+              <div style={{ maxWidth:"82%", background:isUser?C.sage:C.bgSecondary, borderRadius:isUser?"16px 16px 3px 16px":"16px 16px 16px 3px",
+                padding:"12px 14px", border:isUser?`1px solid ${C.sage}`:`1px solid ${C.border}` }}>
+                <p style={{ color:isUser?"#fff":C.textPrimary, fontSize:"14px", lineHeight:"1.8", margin:0, fontStyle:"italic", whiteSpace:"pre-wrap" }}>{msg.content}</p>
+                {isGrowthPlus && !isUser && synthSupported ? (
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"6px", gap:"8px" }}>
+                    <button
+                      type="button"
+                      onClick={() => onTtsToggle(msg.id, msg.content)}
+                      title={ttsPlayingId === msg.id ? "Stop" : "Read aloud"}
+                      aria-label={ttsPlayingId === msg.id ? "Stop reading" : "Read aloud"}
+                      style={{
+                        width:"26px", height:"26px", borderRadius:"6px", padding:0, margin:0, flexShrink:0,
+                        background: ttsPlayingId === msg.id ? `${C.sage}22` : "transparent",
+                        border: `1px solid ${ttsPlayingId === msg.id ? C.sage : C.border}`,
+                        color: ttsPlayingId === msg.id ? C.sage : C.textMuted,
+                        fontSize:"11px", lineHeight:1, cursor:"pointer", fontFamily:font,
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                      }}
+                    >{ttsPlayingId === msg.id ? "■" : "▶"}</button>
+                    <p style={{ color:C.textMuted, fontSize:"9px", margin:0, textAlign:"right", flex:1 }}>{msg.time}</p>
+                  </div>
+                ) : (
+                  <p style={{ color:isUser?"rgba(255,255,255,0.5)":C.textMuted, fontSize:"9px", margin:"4px 0 0", textAlign:"right" }}>{msg.time}</p>
+                )}
+              </div>
+              {isUser && <span style={{ fontSize:"18px", marginLeft:"8px",marginTop:"2px" }}>🤍</span>}
+            </div>
+          );
+        })}
+        {loading && (
+          <div style={{ display:"flex", gap:"6px", paddingLeft:"32px", marginBottom:"12px" }}>
+            {[0,1,2].map((i)=>(<div key={i} style={{ width:"6px", height:"6px", borderRadius:"50%", background:C.sage, opacity:0.5, animation:"gpDot 1s ease-in-out infinite", animationDelay:`${i*0.15}s` }}/>))}
+          </div>
+        )}
+        <div ref={bottomRef}/>
+      </div>
+      <div style={{ padding:"10px 14px 28px", background:C.bgPrimary, borderTop:`1px solid ${C.border}`, flexShrink:0 }}>
+        <div style={{ display:"flex", alignItems:"flex-end", gap:"8px", background:C.bgSecondary, borderRadius:"20px", padding:"10px 12px", border:`1.5px solid ${input?C.sage+"33":C.border}` }}>
+          <textarea ref={inputRef} value={input} onChange={(e)=>setInput(e.target.value)}
+            onKeyDown={(e)=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); }}}
+            placeholder="Write your part of the prayer…" rows={1}
+            style={{ flex:1, background:"none", border:"none", outline:"none", color:C.textPrimary, fontSize:"14px", fontStyle:"italic", fontFamily:font, lineHeight:"1.6", resize:"none", maxHeight:"100px", padding:0 }}/>
+          <button type="button" onClick={send} disabled={!input.trim()||loading} style={{ width:"32px", height:"32px", borderRadius:"50%", background:input.trim()&&!loading?C.sage:C.bgCard, border:"none",
+            cursor:input.trim()&&!loading?"pointer":"default", color:input.trim()&&!loading?"#fff":C.textMuted, fontSize:"14px" }}>→</button>
+        </div>
+      </div>
+      {crisis && <CrisisPanel onClose={()=>setCrisis(false)} C={C} font={font}/>}
+      <style>{`@keyframes gpDot{0%,100%{transform:translateY(0);opacity:.35}50%{transform:translateY(-4px);opacity:1}}`}</style>
+    </div>
+  );
+}
+
+function GuidedPrayerScreen({ C, font, setScreen, tier, faithLevel, userName, onboardingAnswers, isMinorUser, tone, onStructuredComplete, onAiComplete, isTrialActive, onUpgrade, onEveningComplete }) {
+  const isAiMode = (TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth;
+  const canEvening = (TIER_LEVELS[tier]||0) >= TIER_LEVELS.foundation && !isTrialActive;
+  const [mode, setMode] = useState("hub");
+  const [structuredDone, setStructuredDone] = useState(false);
+
+  const backToHub = () => {
+    setMode("hub");
+    setStructuredDone(false);
+  };
+
+  if (mode === "hub") {
+    return (
+      <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font, padding:"40px 20px 100px", boxSizing:"border-box" }}>
+        <div style={{ maxWidth:"480px", margin:"0 auto" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"24px" }}>
+            <button type="button" onClick={()=>setScreen("home")} style={{ background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"20px", padding:"4px 8px 4px 0" }}>←</button>
+            <WaveLogo size={24} color={C.sage}/>
+            <div style={{ flex:1 }}>
+              <p style={{ color:C.sage, fontSize:"9px", letterSpacing:"3px", textTransform:"uppercase", fontStyle:"italic", margin:0 }}>Guided Prayer</p>
+              <p style={{ color:C.textMuted, fontSize:"11px", margin:"2px 0 0" }}>Choose how you want to pray</p>
+            </div>
+          </div>
+          <Label text="Prayer" color={C.sage} font={font}/>
+          <h1 style={{ color:C.textPrimary, fontSize:"clamp(20px,5vw,26px)", fontWeight:"normal", margin:"8px 0 10px" }}>What kind of prayer?</h1>
+          <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 24px" }}>
+            Daytime rhythm or evening rest — both are sacred.
+          </p>
+
+          <button type="button" onClick={()=>{ setStructuredDone(false); setMode(isAiMode ? "guided_ai" : "guided_structured"); }}
+            style={{ width:"100%", textAlign:"left", marginBottom:"12px", cursor:"pointer", background:C.bgSecondary, border:`1.5px solid ${C.sage}44`, borderRadius:"12px", padding:"18px 18px", fontFamily:font, transition:"all 0.2s ease" }}>
+            <div style={{ display:"flex", alignItems:"flex-start", gap:"14px" }}>
+              <span style={{ fontSize:"26px", flexShrink:0 }}>✦</span>
+              <div style={{ flex:1 }}>
+                <p style={{ color:C.textPrimary, fontSize:"15px", fontStyle:"italic", margin:"0 0 6px" }}>Guided Prayer</p>
+                <p style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic", margin:0, lineHeight:1.65 }}>
+                  {isAiMode ? "AI walks with you — gratitude, honesty, intercession, and blessing." : "Opening through closing — a full rhythm of written prayer."}
+                </p>
+              </div>
+              <span style={{ color:C.textMuted, fontSize:"14px" }}>→</span>
+            </div>
+          </button>
+
+          {!canEvening ? (
+            <div style={{ background:C.bgSecondary, borderRadius:"12px", border:`1px solid ${C.border}`, padding:"18px 18px", display:"flex", alignItems:"center", gap:"14px", flexWrap:"wrap" }}>
+              <span style={{ fontSize:"22px" }}>🔒</span>
+              <div style={{ flex:1, minWidth:"200px" }}>
+                <p style={{ color:C.textPrimary, fontSize:"15px", fontStyle:"italic", margin:"0 0 4px" }}>Evening Prayer</p>
+                <p style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic", margin:0, lineHeight:1.65 }}>
+                  Foundation+ · Reflection, release, intercession, and rest before sleep.
+                </p>
+              </div>
+              {onUpgrade && (
+                <button type="button" onClick={onUpgrade} style={{ background:C.accent, border:"none", borderRadius:"3px", color:"#fff", fontSize:"9px", letterSpacing:"2px", textTransform:"uppercase", padding:"10px 16px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>
+                  View plans
+                </button>
+              )}
+            </div>
+          ) : (
+            <button type="button" onClick={()=>setMode("evening")}
+              style={{ width:"100%", textAlign:"left", cursor:"pointer", background:C.bgSecondary, border:`1.5px solid ${C.accent}44`, borderRadius:"12px", padding:"18px 18px", fontFamily:font }}>
+              <div style={{ display:"flex", alignItems:"flex-start", gap:"14px" }}>
+                <span style={{ fontSize:"26px", flexShrink:0 }}>🌙</span>
+                <div style={{ flex:1 }}>
+                  <p style={{ color:C.textPrimary, fontSize:"15px", fontStyle:"italic", margin:"0 0 6px" }}>Evening Prayer</p>
+                  <p style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic", margin:0, lineHeight:1.65 }}>
+                    Wind down — four gentle steps with space to write.
+                  </p>
+                </div>
+                <span style={{ color:C.textMuted, fontSize:"14px" }}>→</span>
+              </div>
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === "evening") {
+    return (
+      <EveningPrayerStructured
+        C={C} font={font} setScreen={setScreen}
+        onBackToMenu={backToHub}
+        onDone={onEveningComplete}
+      />
+    );
+  }
+
+  if (mode === "guided_ai") {
+    return (
+      <GuidedPrayerAISession
+        C={C} font={font} setScreen={setScreen}
+        faithLevel={faithLevel} userName={userName} onboardingAnswers={onboardingAnswers}
+        isMinorUser={isMinorUser} tone={tone} tier={tier}
+        onComplete={onAiComplete}
+        onBackToMenu={backToHub}
+      />
+    );
+  }
+
+  if (structuredDone) {
+    return (
+      <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font, display:"flex", flexDirection:"column", alignItems:"center",
+        justifyContent:"center", padding:"40px 24px", textAlign:"center" }}>
+        <div style={{ maxWidth:"400px" }}>
+          <div style={{ fontSize:"40px", marginBottom:"16px" }}>🕊️</div>
+          <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", fontStyle:"italic", margin:"0 0 12px" }}>Prayer complete</p>
+          <h1 style={{ color:C.textPrimary, fontSize:"clamp(18px,4vw,24px)", fontWeight:"normal", margin:"0 0 16px", lineHeight:"1.45" }}>
+            Peace be with you.
+          </h1>
+          <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 28px" }}>
+            You’ve walked through opening, thanksgiving, confession, intercession, and closing. Carry this stillness into your day.
+          </p>
+          <button type="button" onClick={()=>setScreen("home")} style={{ background:C.sage, border:"none", borderRadius:"3px", color:"#fff", fontSize:"10px", letterSpacing:"3px",
+            textTransform:"uppercase", padding:"14px 32px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>Home</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <GuidedPrayerStructured
+      C={C} font={font} setScreen={setScreen}
+      onBackToMenu={backToHub}
+      onDone={()=>{ onStructuredComplete(); setStructuredDone(true); }}
+    />
+  );
+}
+
+// ═══════════════════════════════════════════════════════
 // NOTEBOOK SCREEN
 // ═══════════════════════════════════════════════════════
-function JournalScreen({ C, font, setScreen, entries, setEntries, onActive }) {
+function JournalScreen({ C, font, setScreen, entries, setEntries, onActive, onNotebookSaved }) {
   const [writing,setWriting]=useState(false);
   const [text,setText]=useState("");
   const [title,setTitle]=useState("");
@@ -7215,6 +9631,7 @@ function JournalScreen({ C, font, setScreen, entries, setEntries, onActive }) {
       text,mood:mood||"😐",tags:[],words:text.trim().split(/\s+/).length};
     setEntries(en=>[e,...en]); setText(""); setTitle(""); setMood(null); setWriting(false);
     if(onActive) onActive();
+    if(onNotebookSaved) onNotebookSaved();
   };
 
   if(writing) return (
@@ -7410,9 +9827,63 @@ function MirrorObservation({ C, font, sessionHistory, steadyDays, sessionCount, 
 }
 
 // ═══════════════════════════════════════════════════════
+// 7-DAY ONBOARDING MISSION (Home tracker + milestone)
+// ═══════════════════════════════════════════════════════
+const MISSION_EVENT = "selah-mission-update";
+const JOURNEY_EVENT = "selah-journey-update";
+
+function markMissionTask(dayNum) {
+  if (dayNum < 1 || dayNum > 7) return;
+  try {
+    localStorage.setItem(`selah_mission_task_${dayNum}`, "1");
+    let all = true;
+    for (let i = 1; i <= 7; i++) {
+      if (!localStorage.getItem(`selah_mission_task_${i}`)) { all = false; break; }
+    }
+    if (all) localStorage.setItem("selah_mission_complete", "1");
+    window.dispatchEvent(new Event(MISSION_EVENT));
+  } catch (e) {}
+}
+
+function readMissionTasks() {
+  const tasks = [];
+  for (let i = 1; i <= 7; i++) tasks.push(localStorage.getItem(`selah_mission_task_${i}`) === "1");
+  return tasks;
+}
+
+function getMissionHomeState() {
+  try {
+    const start = localStorage.getItem("selah_mission_start");
+    if (!start) return { show: false, tasks: readMissionTasks(), allDone: false, daysInto: 0, dismissed: false, withinWeek: false };
+    const startD = new Date(start + "T12:00:00");
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    const daysDiff = Math.floor((today - startD) / 864e5);
+    const tasks = readMissionTasks();
+    const allDone = tasks.every(Boolean);
+    const dismissed = localStorage.getItem("selah_mission_banner_dismissed") === "1";
+    const withinWeek = daysDiff >= 0 && daysDiff < 7;
+    const abandoned = daysDiff >= 7 && !allDone;
+    const showRow = !abandoned && ((!allDone && withinWeek) || (allDone && !dismissed));
+    return {
+      show: showRow,
+      tasks,
+      allDone,
+      daysInto: Math.min(7, Math.max(1, daysDiff + 1)),
+      dismissed,
+      withinWeek,
+      start,
+    };
+  } catch {
+    return { show: false, tasks: Array(7).fill(false), allDone: false, daysInto: 0, dismissed: false, withinWeek: false };
+  }
+}
+
+// ═══════════════════════════════════════════════════════
 // PROGRESS SCREEN (with Growth Mirror)
 // ═══════════════════════════════════════════════════════
 const MILESTONES=[
+  {id:"onboarding_7",icon:"🌿",label:"First Week",desc:"Finished the 7-day introduction to Selah",scripture:'"Teach us to number our days."',ref:"Psalm 90:12"},
   {id:"first_chat",icon:"💬",label:"First Word",desc:"Took the first step and opened up",scripture:'"Ask and it will be given."',ref:"Matthew 7:7"},
   {id:"first_journal",icon:"✍️",label:"First Entry",desc:"Put your inner world into words",scripture:'"Pour out your heart before him."',ref:"Psalm 62:8"},
   {id:"mood_3",icon:"🌡️",label:"Self-Aware",desc:"Checked in with yourself 3 times",scripture:'"Search me, O God, and know my heart."',ref:"Psalm 139:23"},
@@ -7441,8 +9912,18 @@ const MILESTONES=[
   {id:"sessions_75",icon:"⚒️",label:"Built Different",desc:"75 sessions — most people quit long before this",scripture:'"Train yourself to be godly."',ref:"1 Tim. 4:7"},
   {id:"anchor_10",icon:"⚓",label:"Daily Anchor",desc:"Read your anchor 10 times — you keep returning to the source",scripture:'"My soul finds rest in God alone."',ref:"Psalm 62:1"},
   {id:"biblical_5",icon:"📖",label:"Word Made Flesh",desc:"Completed 5 Biblical Reflections — the Word is taking root",scripture:'"Your word is a lamp to my feet."',ref:"Psalm 119:105"},
-  {id:"biblical_all",icon:"🔥",label:"The Full Canon",desc:"Completed all 50 Biblical Reflections — you went the distance",scripture:'"I have hidden your word in my heart."',ref:"Psalm 119:11"},
+  {id:"biblical_all",icon:"🔥",label:"The Full Canon",desc:"Completed all 75 Biblical Reflections — you went the distance",scripture:'"I have hidden your word in my heart."',ref:"Psalm 119:11"},
   {id:"streak_365",icon:"👑",label:"A Full Year",desc:"365 days — you are different. You know it.",scripture:'"Behold, I am making all things new."',ref:"Rev. 21:5"},
+  {id:"journey_advent",icon:"🕯️",label:"Advent Way",desc:"Completed the Advent journey — fourteen days of waiting with hope",scripture:'"The people walking in darkness have seen a great light."',ref:"Isaiah 9:2"},
+  {id:"journey_lent",icon:"✝️",label:"Lent Road",desc:"Completed the Lent journey — honesty, return, and grace",scripture:'"Rend your heart, not your garments."',ref:"Joel 2:13"},
+  {id:"journey_anxiety_peace",icon:"🕊️",label:"Peace Seeker",desc:"Finished Anxiety & Peace — fourteen days toward steadiness",scripture:'"Peace I leave with you."',ref:"John 14:27"},
+  {id:"journey_grief_loss",icon:"🌧️",label:"Honored Grief",desc:"Completed Grief & Loss — naming what was and what remains",scripture:'"Jesus wept."',ref:"John 11:35"},
+  {id:"journey_healing_forgiveness",icon:"💧",label:"Healing Path",desc:"Finished Healing & Forgiveness — softening what hardened",scripture:'"He heals the brokenhearted."',ref:"Psalm 147:3"},
+  {id:"journey_identity_purpose",icon:"✨",label:"Named & Known",desc:"Completed Identity & Purpose — beneath the roles",scripture:'"Before I formed you in the womb I knew you."',ref:"Jeremiah 1:5"},
+  {id:"journey_rest_surrender",icon:"🌙",label:"Holy Rest",desc:"Finished Rest & Surrender — stopping without shame",scripture:'"Come to me, all you who are weary."',ref:"Matthew 11:28"},
+  {id:"journey_renewal",icon:"🌱",label:"New Mercies",desc:"Completed Renewal — new ground, new breath",scripture:'"His mercies are new every morning."',ref:"Lamentations 3:23"},
+  {id:"journey_loneliness",icon:"🤲",label:"Seen",desc:"Finished Loneliness — honesty and connection",scripture:'"The Lord is close to the brokenhearted."',ref:"Psalm 34:18"},
+  {id:"journey_faith_doubt",icon:"❓",label:"Honest Faith",desc:"Completed Faith & Doubt — belief with questions",scripture:'"I believe; help my unbelief."',ref:"Mark 9:24"},
 ];
 
 // ═══════════════════════════════════════════════════════
@@ -7620,11 +10101,24 @@ function EmotionalTimeline({ C, font, moodHistory, sessionHistory }) {
 
 
 function ProgressScreen({ C, font, setScreen, steadyDays, sessionCount, moodHistory, bestStreak, totalActiveDays, sessionHistory, journalEntries, tier, onUpgrade }) {
-  const [unlocked]=useState(() => {
+  const [missionRev,setMissionRev]=useState(0);
+  const [journeyRev,setJourneyRev]=useState(0);
+  useEffect(()=>{
+    const h=()=>setMissionRev(r=>r+1);
+    window.addEventListener(MISSION_EVENT,h);
+    return ()=>window.removeEventListener(MISSION_EVENT,h);
+  },[]);
+  useEffect(()=>{
+    const h=()=>setJourneyRev(r=>r+1);
+    window.addEventListener(JOURNEY_EVENT,h);
+    return ()=>window.removeEventListener(JOURNEY_EVENT,h);
+  },[]);
+  const unlocked=useMemo(() => {
     const u = [];
     const breatheCount = parseInt(localStorage.getItem("selah_breathe_count")||"0");
     const checkinCount = parseInt(localStorage.getItem("selah_checkin_count")||"0");
     const biblicalDone = (() => { try { return JSON.parse(localStorage.getItem("selah_biblical_done")||"[]"); } catch { return []; } })();
+    try { if (localStorage.getItem("selah_mission_complete")==="1") u.push("onboarding_7"); } catch (e) {}
     if (sessionCount >= 1) u.push("first_chat");
     if (journalEntries && journalEntries.length >= 1) u.push("first_journal");
     if (moodHistory && moodHistory.length >= 3) u.push("mood_3");
@@ -7654,10 +10148,19 @@ function ProgressScreen({ C, font, setScreen, steadyDays, sessionCount, moodHist
     const anchorCount = parseInt(localStorage.getItem("selah_anchor_count")||"0");
     if (anchorCount >= 10) u.push("anchor_10");
     if (biblicalDone.length >= 5) u.push("biblical_5");
-    if (biblicalDone.length >= 50) u.push("biblical_all");
+    if (biblicalDone.length >= 75) u.push("biblical_all");
     if (steadyDays >= 365) u.push("streak_365");
+    try {
+      const jc = JSON.parse(localStorage.getItem("selah_journeys_completed") || "[]");
+      if (Array.isArray(jc)) {
+        jc.forEach((jid) => {
+          const mid = `journey_${jid}`;
+          if (MILESTONES.some((m) => m.id === mid)) u.push(mid);
+        });
+      }
+    } catch (e) {}
     return u;
-  });
+  }, [sessionCount, journalEntries, moodHistory, steadyDays, bestStreak, totalActiveDays, sessionHistory, missionRev, journeyRev]);
   const [milestone,setMilestone]=useState(null);
   const [showMirror,setShowMirror]=useState(false);
   const [weeklySummary,setWeeklySummary]=useState(null);
@@ -8288,7 +10791,7 @@ function ResourcesScreen({ C, font, setScreen, onboardingAnswers, faithLevel, ti
     try {
       const r=await fetch("/api/chat",{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:900,
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:400,
           messages:[{role:"user",content:`Generate 3 personalized book/resource recommendations for someone with this profile: ${context}. ${faithLevel>=2?"Include at least one faith-based resource.":"Lean secular."} Use their recent session themes and mood data to make recommendations current — not just based on onboarding. Return ONLY a JSON array: [{"title":"...","author":"...","description":"2 sentences why this is perfect for them right now.","whyNow":"one personal sentence connecting to their current situation","type":"book|podcast|practice"}] No markdown.`}]})});
       const d=await r.json();
       if(d.error) throw new Error(d.error?.message||"API error");
@@ -8773,7 +11276,7 @@ function PrayerWallScreen({ C, font, onClose, tier, isTrialActive, onUpgrade }) 
         body: JSON.stringify({ text: cleanText })
       });
       const d = await r.json();
-      if (d.ok) { setPosted(true); setText(""); await loadPrayers(); try{localStorage.setItem("selah_prayer_posted","1");}catch(e){} }
+      if (d.ok) { setPosted(true); setText(""); await loadPrayers(); try{localStorage.setItem("selah_prayer_posted","1");markMissionTask(7);}catch(e){} }
     } catch { setError("Couldn't post right now. Try again."); }
     finally { setPosting(false); }
   };
@@ -8782,7 +11285,7 @@ function PrayerWallScreen({ C, font, onClose, tier, isTrialActive, onUpgrade }) 
     if (flamed[id]) return;
     const newFlamed = { ...flamed, [id]: true };
     setFlamed(newFlamed);
-    try { localStorage.setItem("selah_flamed", JSON.stringify(newFlamed)); localStorage.setItem("selah_prayer_supported","1"); } catch {}
+    try { localStorage.setItem("selah_flamed", JSON.stringify(newFlamed)); localStorage.setItem("selah_prayer_supported","1"); markMissionTask(7); } catch {}
     setPrayers(prev => prev.map(p => p.id === id ? { ...p, flames: (p.flames||0) + 1 } : p));
     try {
       await fetch("/api/sync?action=prayer_flame", {
@@ -8910,6 +11413,223 @@ function PrayerWallScreen({ C, font, onClose, tier, isTrialActive, onUpgrade }) 
         <p style={{ color:C.textMuted, fontSize:"10px", fontStyle:"italic", textAlign:"center", marginTop:"24px", lineHeight:"1.8" }}>
           Prayers older than 7 days roll off the wall automatically.
         </p>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// SEASONAL JOURNEYS
+// ═══════════════════════════════════════════════════════
+function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgress }) {
+  const [panel, setPanel] = useState("list");
+  const [selectedId, setSelectedId] = useState(null);
+  const [justFinished, setJustFinished] = useState(null);
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  const getProg = (jid) => journeyProgress.byJourney[jid] || { completed: 0, lastDate: null };
+  const isJourneyDone = (jid) => journeyProgress.completed.includes(jid);
+
+  const selectJourney = (jid) => {
+    if (isJourneyDone(jid)) {
+      setSelectedId(jid);
+      setPanel("summary");
+      return;
+    }
+    if (journeyProgress.activeId && journeyProgress.activeId !== jid) {
+      if (!window.confirm("Set this as your active journey? You can only move one path forward at a time; other journeys stay saved.")) return;
+    }
+    setJourneyProgress((prev) => ({
+      ...prev,
+      activeId: jid,
+      byJourney: {
+        ...prev.byJourney,
+        [jid]: prev.byJourney[jid] || { completed: 0, lastDate: null },
+      },
+    }));
+    setSelectedId(jid);
+    setPanel("step");
+  };
+
+  const completeToday = () => {
+    const jid = selectedId;
+    if (!jid) return;
+    const p = getProg(jid);
+    if (p.lastDate === todayStr || p.completed >= 14) return;
+    const next = p.completed + 1;
+    const doneNow = next === 14;
+    setJourneyProgress((prev) => {
+      const by = { ...prev.byJourney, [jid]: { completed: next, lastDate: todayStr } };
+      let completed = prev.completed;
+      if (doneNow && !completed.includes(jid)) {
+        completed = [...completed, jid];
+        try {
+          localStorage.setItem("selah_journeys_completed", JSON.stringify(completed));
+        } catch (e) {}
+        window.dispatchEvent(new Event(JOURNEY_EVENT));
+      }
+      return {
+        ...prev,
+        byJourney: by,
+        completed,
+        activeId: doneNow ? null : prev.activeId,
+      };
+    });
+    if (doneNow) {
+      setJustFinished(SEASONAL_JOURNEYS.find((j) => j.id === jid) || null);
+      setPanel("done");
+    }
+  };
+
+  const journey = selectedId ? SEASONAL_JOURNEYS.find((j) => j.id === selectedId) : null;
+  const prog = selectedId ? getProg(selectedId) : { completed: 0, lastDate: null };
+  const step = journey && prog.completed < 14 ? journey.steps[prog.completed] : null;
+  const pct = journey ? Math.round((prog.completed / 14) * 100) : 0;
+  const canCompleteToday = step && prog.lastDate !== todayStr && prog.completed < 14;
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font, padding:"40px 20px 100px", boxSizing:"border-box" }}>
+      <div style={{ maxWidth:"480px", margin:"0 auto" }}>
+        <button type="button" onClick={() => (panel === "list" ? setScreen("home") : (setPanel("list"), setSelectedId(null), setJustFinished(null)))} style={{ background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"20px", marginBottom:"20px", padding:"4px 8px 4px 0" }}>
+          ←
+        </button>
+        <Label text="Grow" color={C.sage} font={font} />
+        <h1 style={{ color:C.textPrimary, fontSize:"clamp(22px,5vw,28px)", fontWeight:"normal", margin:"6px 0 8px" }}>Seasonal Journeys</h1>
+        <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 24px" }}>
+          Fourteen days — one step per day. Pick a path; your progress is saved on this device and in the cloud when you sync.
+        </p>
+
+        {panel === "list" && (
+          <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+            {SEASONAL_JOURNEYS.map((j) => {
+              const p = getProg(j.id);
+              const done = isJourneyDone(j.id);
+              const active = journeyProgress.activeId === j.id;
+              return (
+                <button
+                  key={j.id}
+                  type="button"
+                  onClick={() => selectJourney(j.id)}
+                  style={{
+                    textAlign:"left",
+                    background: active ? `${C.sage}12` : C.bgSecondary,
+                    border:`1px solid ${active ? C.sage + "55" : C.border}`,
+                    borderRadius:"12px",
+                    padding:"16px 18px",
+                    cursor:"pointer",
+                    fontFamily:font,
+                    transition:"all 0.2s ease",
+                  }}
+                >
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"12px" }}>
+                    <div style={{ flex:1 }}>
+                      <p style={{ color:C.textPrimary, fontSize:"15px", fontWeight:"bold", margin:"0 0 4px" }}>{j.title}</p>
+                      <p style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic", margin:0, lineHeight:1.5 }}>{j.subtitle}</p>
+                    </div>
+                    <span style={{ color:done ? C.sage : C.textMuted, fontSize:"10px", letterSpacing:"1px", whiteSpace:"nowrap" }}>
+                      {done ? "Complete" : `${p.completed}/14`}
+                    </span>
+                  </div>
+                  {active && !done && (
+                    <p style={{ color:C.sage, fontSize:"9px", letterSpacing:"2px", textTransform:"uppercase", margin:"10px 0 0", fontStyle:"italic" }}>Active journey</p>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {panel === "step" && journey && step && (
+          <div>
+            <div style={{ marginBottom:"16px" }}>
+              <p style={{ color:C.sage, fontSize:"9px", letterSpacing:"3px", textTransform:"uppercase", fontStyle:"italic", margin:"0 0 8px" }}>
+                Day {prog.completed + 1} of 14
+              </p>
+              <div style={{ height:"8px", background:C.bgSecondary, borderRadius:"8px", overflow:"hidden", border:`1px solid ${C.border}` }}>
+                <div style={{ width:`${pct}%`, height:"100%", background:C.sage, transition:"width 0.4s ease" }} />
+              </div>
+              <p style={{ color:C.textMuted, fontSize:"10px", margin:"6px 0 0", textAlign:"right" }}>{prog.completed} completed</p>
+            </div>
+            <div style={{ background:`${C.sage}08`, border:`1.5px solid ${C.sage}33`, borderRadius:"12px", padding:"20px", marginBottom:"20px" }}>
+              <h2 style={{ color:C.textPrimary, fontSize:"clamp(17px,4vw,20px)", fontWeight:"normal", margin:"0 0 14px", lineHeight:1.35 }}>{step.title}</h2>
+              <p style={{ color:C.accent, fontSize:"12px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 16px", borderLeft:`3px solid ${C.accent}44`, paddingLeft:"12px" }}>{step.quote}</p>
+              <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic", lineHeight:"1.9", margin:"0 0 14px" }}>{step.prompt}</p>
+              {step.action && (
+                <div style={{ background:`${C.terra}08`, borderRadius:"8px", padding:"12px 14px", border:`1px solid ${C.terra}22` }}>
+                  <p style={{ color:C.terra, fontSize:"9px", letterSpacing:"2px", textTransform:"uppercase", margin:"0 0 6px", fontStyle:"italic" }}>Optional action</p>
+                  <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", margin:0, lineHeight:1.7 }}>{step.action}</p>
+                </div>
+              )}
+            </div>
+            {prog.lastDate === todayStr && prog.completed < 14 && (
+              <p style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic", textAlign:"center", marginBottom:"16px" }}>You’ve completed today’s step. Come back tomorrow for the next.</p>
+            )}
+            <button
+              type="button"
+              onClick={completeToday}
+              disabled={!canCompleteToday}
+              style={{
+                width:"100%",
+                background: canCompleteToday ? C.sage : C.bgCard,
+                border:`1px solid ${canCompleteToday ? C.sage : C.border}`,
+                borderRadius:"3px",
+                color: canCompleteToday ? "#fff" : C.textMuted,
+                fontSize:"10px",
+                letterSpacing:"3px",
+                textTransform:"uppercase",
+                padding:"16px",
+                cursor: canCompleteToday ? "pointer" : "default",
+                fontFamily:font,
+                fontStyle:"italic",
+              }}
+            >
+              {prog.lastDate === todayStr && prog.completed > 0 && prog.completed < 14 ? "Done for today" : prog.completed === 0 && prog.lastDate === null ? "Complete day 1" : "Mark today’s step complete"}
+            </button>
+          </div>
+        )}
+
+        {panel === "summary" && journey && isJourneyDone(selectedId) && (
+          <div style={{ background:C.bgSecondary, border:`1px solid ${C.border}`, borderRadius:"12px", padding:"20px", textAlign:"center" }}>
+            <div style={{ fontSize:"40px", marginBottom:"12px" }}>✓</div>
+            <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", margin:"0 0 8px" }}>Finished</p>
+            <p style={{ color:C.textPrimary, fontSize:"18px", fontFamily:font, margin:"0 0 8px" }}>{journey.title}</p>
+            <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:1.8, margin:0 }}>You walked all fourteen days. The badge for this journey is in Progress.</p>
+          </div>
+        )}
+
+        {panel === "done" && justFinished && (
+          <div style={{ textAlign:"center", padding:"24px 0" }}>
+            <div style={{ fontSize:"48px", marginBottom:"16px" }}>🗺️</div>
+            <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", margin:"0 0 12px" }}>Journey complete</p>
+            <h2 style={{ color:C.textPrimary, fontSize:"clamp(20px,5vw,24px)", fontWeight:"normal", margin:"0 0 12px", lineHeight:1.35 }}>{justFinished.title}</h2>
+            <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic", lineHeight:"1.9", margin:"0 0 24px" }}>
+              Fourteen days of showing up — that is no small thing. A new milestone badge is waiting for you on your Progress screen.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setJustFinished(null);
+                setSelectedId(null);
+                setPanel("list");
+              }}
+              style={{
+                background:C.sage,
+                border:"none",
+                borderRadius:"3px",
+                color:"#fff",
+                fontSize:"10px",
+                letterSpacing:"3px",
+                textTransform:"uppercase",
+                padding:"14px 28px",
+                cursor:"pointer",
+                fontFamily:font,
+                fontStyle:"italic",
+              }}
+            >
+              Back to journeys
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -9770,10 +12490,15 @@ function FeatureGuideScreen({ C, font, setScreen }) {
 // ═══════════════════════════════════════════════════════
 function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId,
   faithLevel, setFaithLevel,
-  sharingEnabled, setSharingEnabled, pushEnabled, setPushEnabled, onSubscription, onFounder, onReset,
-  tone, setTone, quoteFreq, setQuoteFreq, tier, trialDaysLeft,
-  userEmail, authToken, syncStatus, onLogin, onLogout, onSendCode, autoLoginEmail, onClearAutoLogin,
-  seasonalMode, setSeasonalMode, currentSeason, onShowTour }) {
+  sharingEnabled, setSharingEnabled, pushEnabled, setPushEnabled,
+  pushGuidedPrayerEnabled, setPushGuidedPrayerEnabled, pushGuidedPrayerHour, setPushGuidedPrayerHour,
+  pushEveningPrayerEnabled, setPushEveningPrayerEnabled, pushEveningPrayerHour, setPushEveningPrayerHour,
+  dailyReminderHour, setDailyReminderHour,
+  onSubscription, onFounder, onReset,
+  tone, setTone, quoteFreq, setQuoteFreq, tier, trialDaysLeft, isTrialActive,
+  userEmail, authToken, syncStatus, syncError, foundingMember, onLogin, onLogout, onSendCode, autoLoginEmail, onClearAutoLogin,
+  seasonalMode, setSeasonalMode, currentSeason, onShowTour,
+  appLockEnabled, appLockMethod, webAuthnAvailable, onAppLockConfigure, onAppLockDisable }) {
 
   const [tab, setTab] = useState("space");
   const [showTerms, setShowTerms] = useState(false);
@@ -9787,6 +12512,39 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId
 
   // Auto-open login flow after payment
   const [paymentLogin, setPaymentLogin] = useState(false);
+
+  const REMINDER_HOUR_OPTIONS = [
+    { value: "6", label: "6am" },
+    { value: "7", label: "7am" },
+    { value: "8", label: "8am" },
+    { value: "9", label: "9am" },
+    { value: "10", label: "10am" },
+    { value: "11", label: "11am" },
+    { value: "12", label: "12pm" },
+    { value: "13", label: "1pm" },
+    { value: "14", label: "2pm" },
+    { value: "15", label: "3pm" },
+    { value: "16", label: "4pm" },
+    { value: "17", label: "5pm" },
+    { value: "18", label: "6pm" },
+    { value: "19", label: "7pm" },
+    { value: "20", label: "8pm" },
+    { value: "21", label: "9pm" },
+    { value: "22", label: "10pm" },
+    { value: "23", label: "11pm" },
+  ];
+  const reminderHourLabel = (() => {
+    const o = REMINDER_HOUR_OPTIONS.find((x) => x.value === dailyReminderHour);
+    if (o) return o.label;
+    const h = parseInt(dailyReminderHour, 10);
+    if (!Number.isNaN(h) && h >= 0 && h <= 23) {
+      const hr = h % 12 === 0 ? 12 : h % 12;
+      return `${hr}${h >= 12 ? "pm" : "am"}`;
+    }
+    return "8am";
+  })();
+  const canCustomizeReminderTime = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !isTrialActive;
+
   useEffect(() => {
     if (autoLoginEmail && !userEmail) {
       setLoginEmail(autoLoginEmail);
@@ -10279,8 +13037,24 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId
                   <div>
                     <p style={{ color:C.textPrimary, fontSize:"13px", fontFamily:font,
                       margin:"0 0 2px" }}>{userEmail}</p>
-                    <p style={{ color:C.sage, fontSize:"10px", fontStyle:"italic", margin:0 }}>
-                      {syncStatus==="synced"?"✓ Data backed up":"☁ Cloud backup active"}
+                    {foundingMember && (
+                      <p style={{
+                        color:C.sage, fontSize:"9px", letterSpacing:"1.2px",
+                        textTransform:"uppercase", margin:"0 0 3px", opacity:0.85
+                      }}>
+                        ✦ Founding Member
+                      </p>
+                    )}
+                    <p style={{
+                      color: syncStatus === "error" ? C.terra : C.sage,
+                      fontSize:"10px", fontStyle:"italic", margin:0,
+                      lineHeight:1.45
+                    }}>
+                      {syncStatus === "error" && syncError
+                        ? syncError
+                        : syncStatus === "synced"
+                          ? "✓ Data backed up"
+                          : "☁ Cloud backup active"}
                     </p>
                   </div>
                 </div>
@@ -10403,6 +13177,40 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId
             </p>
           </div>
 
+          {/* Privacy & Security */}
+          <div style={{ marginBottom:"16px" }}>
+            <Label text="Privacy & Security" color={C.sage} font={font}/>
+            <div style={{ background:C.bgSecondary, borderRadius:"10px", padding:"16px 18px",
+              border:`1px solid ${C.border}`, marginTop:"10px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:"14px", marginBottom: appLockEnabled ? "12px" : 0 }}>
+                <span style={{ fontSize:"18px", flexShrink:0 }}>🔐</span>
+                <div style={{ flex:1 }}>
+                  <p style={{ color:C.textPrimary, fontSize:"13px", fontFamily:font, margin:"0 0 2px" }}>App lock</p>
+                  <p style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic", margin:0, lineHeight:1.6 }}>
+                    {appLockEnabled
+                      ? (appLockMethod === "webauthn"
+                          ? "Face ID / Touch ID + backup PIN — locks when you leave the app"
+                          : "4-digit PIN — locks when you leave the app")
+                      : "Require PIN or biometrics when you return to Selah"}
+                  </p>
+                </div>
+                <Toggle v={appLockEnabled} onChange={(v)=>{
+                  if (v) onAppLockConfigure();
+                  else onAppLockDisable();
+                }}/>
+              </div>
+              {appLockEnabled && (
+                <button type="button" onClick={onAppLockConfigure} style={{
+                  width:"100%", marginTop:"4px", background:`${C.amber}12`, border:`1px solid ${C.amber}33`,
+                  borderRadius:"8px", color:C.textSoft, fontSize:"11px", fontStyle:"italic",
+                  padding:"12px", cursor:"pointer", fontFamily:font }}>
+                  Change PIN or lock method
+                  {webAuthnAvailable ? "" : " (biometrics unavailable in this browser)"}
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Account links */}
           <div style={{ background:C.bgSecondary,borderRadius:"10px",
             overflow:"hidden",border:`1px solid ${C.border}`,marginTop:"16px" }}>
@@ -10417,7 +13225,7 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId
                 }catch{alert("Connection error. Please try again.");}
               }}]:[]),
               {icon:"💬",label:"Share Feedback",sub:"Rate your experience — I read every one",onPress:()=>setScreen("feedback")},
-              {icon:"✦",label:"Founder's Note",sub:"A message from ZS",onPress:onFounder},
+              {icon:"✦",label:"Founder's Note",sub:"Why Selah exists — raw & honest",onPress:onFounder},
               {icon:"🔒",label:"Privacy",sub:"Your data is encrypted & never sold",onPress:()=>setShowPrivacy(true)},
               {icon:"⚖️",label:"Terms & Disclaimer",sub:"Legal notice & liability waiver",onPress:()=>setShowTerms(true)},
             ].map((row,i,arr)=>(
@@ -10450,7 +13258,9 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId
                 <p style={{ color:C.textPrimary,fontSize:"13px",fontFamily:font,
                   margin:"0 0 2px" }}>Push Notifications</p>
                 <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",margin:0 }}>
-                  Verse of the day · 8am daily
+                  {canCustomizeReminderTime
+                    ? `Verse of the day · daily at ${reminderHourLabel}`
+                    : "Verse of the day · daily reminder at 8am"}
                 </p>
               </div>
               <Toggle v={pushEnabled} onChange={async(val)=>{
@@ -10466,7 +13276,16 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId
                       await fetch("/api/push-subscribe", {
                         method: "POST",
                         headers: {"Content-Type":"application/json"},
-                        body: JSON.stringify({ subscription, userId: localStorage.getItem("selah_user_id")||"anon", email: userEmail||"" })
+                        body: JSON.stringify({
+                          subscription,
+                          userId: localStorage.getItem("selah_user_id")||"anon",
+                          email: userEmail||"",
+                          guidedPrayerEnabled: !!pushGuidedPrayerEnabled,
+                          guidedPrayerHour: parseInt(pushGuidedPrayerHour, 10),
+                          eveningPrayerEnabled: !!pushEveningPrayerEnabled,
+                          eveningPrayerHour: parseInt(pushEveningPrayerHour, 10),
+                          tzOffsetMinutes: new Date().getTimezoneOffset(),
+                        })
                       });
                       setPushEnabled(true);
                     }
@@ -10488,6 +13307,98 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId
                 }
               }}/>
             </div>
+            {canCustomizeReminderTime && (
+              <div style={{ borderTop:`1px solid ${C.border}`, padding:"14px 18px 16px" }}>
+                <label htmlFor="selah-daily-reminder-hour" style={{ display:"block", color:C.textMuted, fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", fontStyle:"italic", marginBottom:"10px", fontFamily:font }}>
+                  Daily reminder time
+                </label>
+                <select
+                  id="selah-daily-reminder-hour"
+                  value={dailyReminderHour}
+                  onChange={(e) => setDailyReminderHour(normalizeDailyReminderHour(e.target.value))}
+                  style={{
+                    width:"100%", maxWidth:"280px", boxSizing:"border-box",
+                    background:C.bgPrimary, color:C.textPrimary, border:`1px solid ${C.border}`,
+                    borderRadius:"6px", padding:"12px 14px", fontSize:"13px", fontFamily:font, fontStyle:"italic",
+                    cursor:"pointer", outline:"none", appearance:"auto",
+                  }}
+                >
+                  {REMINDER_HOUR_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {pushEnabled && (
+              <>
+                <div style={{ borderTop:`1px solid ${C.border}`, padding:"14px 18px" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"10px" }}>
+                    <div style={{ flex:1 }}>
+                      <p style={{ color:C.textPrimary, fontSize:"12px", fontFamily:font, margin:"0 0 2px" }}>Guided Prayer</p>
+                      <p style={{ color:C.textMuted, fontSize:"10px", fontStyle:"italic", margin:0, lineHeight:1.5 }}>
+                        A nudge to open Selah for guided prayer
+                      </p>
+                    </div>
+                    <Toggle v={pushGuidedPrayerEnabled} onChange={setPushGuidedPrayerEnabled}/>
+                  </div>
+                  {pushGuidedPrayerEnabled && (
+                    <div style={{ marginTop:"8px" }}>
+                      <label htmlFor="selah-guided-prayer-hour" style={{ display:"block", color:C.textMuted, fontSize:"9px", letterSpacing:"1.5px", textTransform:"uppercase", fontStyle:"italic", marginBottom:"8px", fontFamily:font }}>
+                        Preferred time
+                      </label>
+                      <select
+                        id="selah-guided-prayer-hour"
+                        value={pushGuidedPrayerHour}
+                        onChange={(e) => setPushGuidedPrayerHour(normalizeDailyReminderHour(e.target.value))}
+                        style={{
+                          width:"100%", maxWidth:"280px", boxSizing:"border-box",
+                          background:C.bgPrimary, color:C.textPrimary, border:`1px solid ${C.border}`,
+                          borderRadius:"6px", padding:"10px 12px", fontSize:"12px", fontFamily:font, fontStyle:"italic",
+                          cursor:"pointer", outline:"none",
+                        }}
+                      >
+                        {REMINDER_HOUR_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+                <div style={{ borderTop:`1px solid ${C.border}`, padding:"14px 18px 16px" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"10px" }}>
+                    <div style={{ flex:1 }}>
+                      <p style={{ color:C.textPrimary, fontSize:"12px", fontFamily:font, margin:"0 0 2px" }}>Evening Prayer</p>
+                      <p style={{ color:C.textMuted, fontSize:"10px", fontStyle:"italic", margin:0, lineHeight:1.5 }}>
+                        A quiet invite for tonight&apos;s evening prayer
+                      </p>
+                    </div>
+                    <Toggle v={pushEveningPrayerEnabled} onChange={setPushEveningPrayerEnabled}/>
+                  </div>
+                  {pushEveningPrayerEnabled && (
+                    <div style={{ marginTop:"8px" }}>
+                      <label htmlFor="selah-evening-prayer-hour" style={{ display:"block", color:C.textMuted, fontSize:"9px", letterSpacing:"1.5px", textTransform:"uppercase", fontStyle:"italic", marginBottom:"8px", fontFamily:font }}>
+                        Preferred time
+                      </label>
+                      <select
+                        id="selah-evening-prayer-hour"
+                        value={pushEveningPrayerHour}
+                        onChange={(e) => setPushEveningPrayerHour(normalizeDailyReminderHour(e.target.value))}
+                        style={{
+                          width:"100%", maxWidth:"280px", boxSizing:"border-box",
+                          background:C.bgPrimary, color:C.textPrimary, border:`1px solid ${C.border}`,
+                          borderRadius:"6px", padding:"10px 12px", fontSize:"12px", fontFamily:font, fontStyle:"italic",
+                          cursor:"pointer", outline:"none",
+                        }}
+                      >
+                        {REMINDER_HOUR_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           <div style={{ textAlign:"center",marginTop:"24px" }}>
@@ -11681,7 +14592,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
       monthly:6, annual:50,
       color:C.accent,
       tagline:"Your full space. Unlimited reflection.",
-      features:["3 AI reflections per day","Full Biblical Reflections (50+ stories)","Daily Anchor — AI quote & reflection","The Bench — save insights","Quick Check-in","Prayer Wall — post & hold prayers","All themes, fonts & customization","This Time Last Month insights","Full session history & streaks"],
+      features:["3 AI reflections per day","Full Biblical Reflections (75+ stories)","Daily Anchor — AI quote & reflection","The Bench — save insights","Quick Check-in","Prayer Wall — post & hold prayers","All themes, fonts & customization","This Time Last Month insights","Full session history & streaks"],
       locked:[]},
     {id:"growth",name:"Growth",
       monthly:12, annual:80,
@@ -11702,7 +14613,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
     { feature:"Daily AI Reflections",         free:"2/day",   foundation:"3/day",     growth:"5/day",      deep:"Unlimited" },
     { feature:"Breathe, Notebook, Heavy Day", free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Gratitude & Letters to God",   free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
-    { feature:"Biblical Reflections",         free:"—",       foundation:"Full — 50+",growth:"Full — 50+", deep:"Full — 50+" },
+    { feature:"Biblical Reflections",         free:"—",       foundation:"Full — 75+",growth:"Full — 75+", deep:"Full — 75+" },
     { feature:"Prayer Wall",                  free:"View",    foundation:"Post & hold",growth:"Post & hold",deep:"Post & hold" },
     { feature:"Daily Anchor",                 free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"The Bench (saved insights)",   free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
@@ -12284,70 +15195,40 @@ function FounderNote({ C, font, onClose }) {
       zIndex:300,padding:"24px",fontFamily:font }}>
       <div style={{ background:C.bgPrimary,borderRadius:"12px",padding:"32px 28px",
         maxWidth:"420px",width:"100%",maxHeight:"80vh",overflowY:"auto",
-        border:`1px solid ${C.accent}33` }}>
+        border:`1px solid ${C.sage}33` }}>
         <div style={{ display:"flex",justifyContent:"space-between",
-          alignItems:"flex-start",marginBottom:"24px" }}>
+          alignItems:"flex-start",marginBottom:"20px" }}>
           <div>
             <p style={{ color:C.amber,fontSize:"9px",letterSpacing:"3px",
-              textTransform:"uppercase",fontStyle:"italic",margin:"0 0 4px" }}>A Note From The Founder</p>
-            <WaveLogo size={28} color={C.accent}/>
+              textTransform:"uppercase",fontStyle:"italic",margin:"0 0 4px" }}>A note from the founder</p>
+            <WaveLogo size={28} color={C.sage}/>
           </div>
           <button onClick={onClose} style={{ background:"none",border:"none",
             cursor:"pointer",color:C.textMuted,fontSize:"20px",padding:"0" }}>✕</button>
         </div>
 
-        <p style={{ color:C.textSoft,fontSize:"14px",fontStyle:"italic",
-          lineHeight:"2.1",margin:"0 0 18px",fontWeight:"bold" }}>
-          I know what it's like to not be okay and have no one to tell.
-        </p>
+        <div style={{
+          marginBottom:"20px", padding:"14px 16px",
+          borderLeft:`3px solid ${C.sage}44`,
+          background:`${C.sage}08`,
+          borderRadius:"0 10px 10px 0"
+        }}>
+          <p style={{ color:C.textSoft,fontSize:"13px",fontStyle:"italic",
+            lineHeight:"2",margin:"0 0 14px" }}>
+            I'm not a preacher. I'm not perfect. I built Selah because I know what it feels like to be desperate and not know where to turn — and I know that God is the only one who never runs out of answers.
+          </p>
+          <p style={{ color:C.textSoft,fontSize:"13px",fontStyle:"italic",
+            lineHeight:"2",margin:0 }}>
+            This app isn't about religion. It's about that moment when everything else fails and you need somewhere real to go.
+          </p>
+        </div>
 
-        <p style={{ color:C.textSoft,fontSize:"13px",fontStyle:"italic",
-          lineHeight:"2.1",margin:"0 0 16px" }}>
-          I've been the person lying awake at 2am with a chest full of things I couldn't name. I've smiled through days that were breaking me. I've sat in rooms full of people and felt completely alone. I know what it's like to want to talk but not know where to start — or to feel like your problems aren't "bad enough" to deserve help.
-        </p>
-
-        <p style={{ color:C.textSoft,fontSize:"13px",fontStyle:"italic",
-          lineHeight:"2.1",margin:"0 0 16px" }}>
-          I didn't build Selah because I had it figured out. I built it because I didn't. Because I needed something like this and it didn't exist. A place with no judgment. No waiting rooms. No explaining yourself to someone who doesn't understand. Just a space to breathe, to think, to be honest with yourself for the first time in a long time.
-        </p>
-
-        <p style={{ color:C.textSoft,fontSize:"13px",fontStyle:"italic",
-          lineHeight:"2.1",margin:"0 0 16px" }}>
-          If you're here, I already know something about you — you haven't given up. Something in you is still reaching, still searching, still fighting even when you're tired. That's not weakness. That's the kind of strength most people will never understand.
-        </p>
-
-        <p style={{ color:C.textPrimary,fontSize:"14px",fontStyle:"italic",
-          lineHeight:"2.1",margin:"0 0 16px",fontWeight:"bold" }}>
-          I need you to hear this: the darkness you're sitting in right now is not where your story ends.
-        </p>
-
-        <p style={{ color:C.textSoft,fontSize:"13px",fontStyle:"italic",
-          lineHeight:"2.1",margin:"0 0 16px" }}>
-          You are not too broken. You are not too far gone. You are not too late. The fact that you're here — reading this, trying this — is proof that something inside you still believes there's more. And there is. I promise you there is.
-        </p>
-
-        <p style={{ color:C.textSoft,fontSize:"13px",fontStyle:"italic",
-          lineHeight:"2.1",margin:"0 0 20px" }}>
-          Selah exists because you deserve a place to heal without asking permission. Use it on your hardest days. Use it on your quiet days. Use it when you don't have words — sometimes just showing up is the breakthrough.
-        </p>
-
-        <p style={{ color:C.accent,fontSize:"14px",fontStyle:"italic",
-          lineHeight:"2.1",margin:"0 0 4px",fontWeight:"bold" }}>
-          I'm building this for you. I'm building this with you. And I'm not stopping.
-        </p>
-
-        <div style={{ display:"flex",alignItems:"center",gap:"10px",margin:"20px 0 16px" }}>
-          <div style={{ flex:1,height:"1px",background:C.accent,opacity:0.3 }}/>
+        <div style={{ display:"flex",alignItems:"center",gap:"10px",margin:"8px 0 0" }}>
+          <div style={{ flex:1,height:"1px",background:C.sage,opacity:0.35 }}/>
           <span style={{ color:C.textMuted,fontSize:"10px",letterSpacing:"2px",
             textTransform:"uppercase",fontStyle:"italic" }}>ZS</span>
-          <div style={{ flex:1,height:"1px",background:C.accent,opacity:0.3 }}/>
+          <div style={{ flex:1,height:"1px",background:C.sage,opacity:0.35 }}/>
         </div>
-        <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",
-          textAlign:"center",lineHeight:"1.8",margin:0 }}>
-          "Even though I walk through the valley of the shadow of death, I will fear no evil, for you are with me."
-        </p>
-        <p style={{ color:C.sageLight,fontSize:"9px",letterSpacing:"2px",
-          textTransform:"uppercase",textAlign:"center",margin:"6px 0 0" }}>Psalm 23:4</p>
       </div>
     </div>
   );
@@ -12943,6 +15824,26 @@ function AnalyticsScreen({ C, font, setScreen }) {
   );
 }
 
+function normalizeDailyReminderHour(v) {
+  const n = parseInt(String(v == null ? "8" : v).trim(), 10);
+  if (Number.isNaN(n) || n < 0 || n > 23) return "8";
+  return String(n);
+}
+
+function countReflectSessionsToday(sessionHistory) {
+  const today = new Date().toDateString();
+  return (sessionHistory || []).filter((s) => s?.date && new Date(s.date).toDateString() === today).length;
+}
+
+// Merge saved reflection archives from local + cloud (by session id).
+function mergeSavedReflections(local, remote) {
+  const m = new Map();
+  [...(local || []), ...(remote || [])].forEach((x) => {
+    if (x && x.id != null) m.set(String(x.id), x);
+  });
+  return [...m.values()].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 150);
+}
+
 // ═══════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════
@@ -12982,6 +15883,21 @@ function SelahAppInner() {
   const [showCrisisFromNav, setShowCrisisFromNav] = useState(false);
   const [sharingEnabled, setSharingEnabled] = useState(has("sharingEnabled") ? saved.sharingEnabled : false);
   const [pushEnabled, setPushEnabled] = useState(has("pushEnabled") ? saved.pushEnabled : false);
+  const [pushGuidedPrayerEnabled, setPushGuidedPrayerEnabled] = useState(
+    has("pushGuidedPrayerEnabled") ? !!saved.pushGuidedPrayerEnabled : false
+  );
+  const [pushGuidedPrayerHour, setPushGuidedPrayerHour] = useState(
+    has("pushGuidedPrayerHour") ? normalizeDailyReminderHour(saved.pushGuidedPrayerHour) : "7"
+  );
+  const [pushEveningPrayerEnabled, setPushEveningPrayerEnabled] = useState(
+    has("pushEveningPrayerEnabled") ? !!saved.pushEveningPrayerEnabled : false
+  );
+  const [pushEveningPrayerHour, setPushEveningPrayerHour] = useState(
+    has("pushEveningPrayerHour") ? normalizeDailyReminderHour(saved.pushEveningPrayerHour) : "21"
+  );
+  const [dailyReminderHour, setDailyReminderHour] = useState(
+    has("dailyReminderHour") ? normalizeDailyReminderHour(saved.dailyReminderHour) : "8"
+  );
   const [isMinorUser, setIsMinorUser] = useState(has("isMinorUser") ? saved.isMinorUser : false);
 const [consentVerified, setConsentVerified] = useState(false);
 useEffect(() => {
@@ -13022,13 +15938,57 @@ useEffect(() => {
   const [bestStreak, setBestStreak] = useState(has("bestStreak") ? saved.bestStreak : 0);
   const [totalActiveDays, setTotalActiveDays] = useState(has("totalActiveDays") ? saved.totalActiveDays : 0);
   const [graceUsedWeek, setGraceUsedWeek] = useState(has("graceUsedWeek") ? saved.graceUsedWeek : null); // {week: string, count: number}
+  const [journeyProgress, setJourneyProgress] = useState(() => {
+    if (has("journeyProgress") && saved.journeyProgress && typeof saved.journeyProgress === "object") {
+      const d = saved.journeyProgress;
+      return {
+        activeId: d.activeId ?? null,
+        byJourney: d.byJourney && typeof d.byJourney === "object" ? d.byJourney : {},
+        completed: Array.isArray(d.completed) ? d.completed : [],
+      };
+    }
+    return defaultJourneyProgress();
+  });
   const [sessionHistory, setSessionHistory] = useState(has("sessionHistory") ? saved.sessionHistory : []);
+  const [savedReflections, setSavedReflections] = useState(has("savedReflections") ? saved.savedReflections : []);
   const [assessmentResults, setAssessmentResults] = useState(has("assessmentResults") ? saved.assessmentResults : {});
   const [userEmail, setUserEmail] = useState(has("userEmail") ? saved.userEmail : null);
+  const [foundingMember, setFoundingMember] = useState(has("foundingMember") ? !!saved.foundingMember : false);
   const [autoLoginEmail, setAutoLoginEmail] = useState(null);
   const [stripeEmail, setStripeEmail] = useState(has("stripeEmail") ? saved.stripeEmail : null);
   const [authToken, setAuthToken] = useState(()=>{ try { return localStorage.getItem("selah_auth_token")||null; } catch { return null; } });
-  const [syncStatus, setSyncStatus] = useState(null); // null, "syncing", "synced", "error"
+  const [syncStatus, setSyncStatus] = useState(null); // null, "synced", "error"
+  const [syncError, setSyncError] = useState(null);
+
+  const [appLockEnabled, setAppLockEnabled] = useState(has("appLockEnabled") ? !!saved.appLockEnabled : false);
+  const [appLockMethod, setAppLockMethod] = useState(
+    has("appLockMethod") && (saved.appLockMethod === "pin" || saved.appLockMethod === "webauthn") ? saved.appLockMethod : "pin"
+  );
+  const [appLockPinHash, setAppLockPinHash] = useState(has("appLockPinHash") ? saved.appLockPinHash : "");
+  const [appLockWebAuthnCredentialId, setAppLockWebAuthnCredentialId] = useState(
+    has("appLockWebAuthnCredentialId") ? saved.appLockWebAuthnCredentialId : ""
+  );
+  const [appLockOnboardingDone, setAppLockOnboardingDone] = useState(() => {
+    if (has("appLockOnboardingDone")) return !!saved.appLockOnboardingDone;
+    if (has("isFirstVisit") && saved.isFirstVisit === false) return true;
+    return false;
+  });
+  const [appLocked, setAppLocked] = useState(() => !!(has("appLockEnabled") && saved.appLockEnabled));
+  const [showAppLockSettingsModal, setShowAppLockSettingsModal] = useState(false);
+
+  const unlockApp = useCallback(() => setAppLocked(false), []);
+
+  const applyAppLockSetup = useCallback((cfg) => {
+    if (cfg?.enabled) {
+      setAppLockEnabled(true);
+      setAppLockMethod(cfg.method === "webauthn" ? "webauthn" : "pin");
+      setAppLockPinHash(cfg.pinHash || "");
+      setAppLockWebAuthnCredentialId(cfg.webAuthnCredentialId || "");
+      setAppLocked(false);
+    }
+    setAppLockOnboardingDone(true);
+    setShowAppLockSettingsModal(false);
+  }, []);
 
   // ── Trial logic ──
   const trialDaysLeft = (() => {
@@ -13040,6 +16000,7 @@ useEffect(() => {
   const adminMode = new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04";
   const effectiveTier = adminMode ? "deep" : tier;
   const isTrialActive = effectiveTier === "free" && trialDaysLeft > 0;
+  const weeklyGraceBudget = weeklyStreakGraceBudget(effectiveTier, isTrialActive);
 
   // ── Streak logic ──
   const getDateStr = (d) => new Date(d).toISOString().split("T")[0]; // "YYYY-MM-DD"
@@ -13065,7 +16026,8 @@ useEffect(() => {
     const currentWeekKey = getDateStr(weekStart);
 
     const graceCount = (graceUsedWeek?.week === currentWeekKey) ? (graceUsedWeek?.count || 0) : 0;
-    const graceRemaining = 2 - graceCount;
+    const weeklyBudget = weeklyStreakGraceBudget(effectiveTier, isTrialActive);
+    const graceRemaining = weeklyBudget - graceCount;
 
     const threeDaysAgo = new Date();
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
@@ -13076,14 +16038,14 @@ useEffect(() => {
       const newStreak = steadyDays + 1;
       setSteadyDays(newStreak);
       if (newStreak > bestStreak) setBestStreak(newStreak);
-    } else if (lastActiveDate === twoDaysAgoStr && graceRemaining >= 1 && steadyDays > 0) {
-      // Missed 1 day — use 1 grace day
+    } else if (lastActiveDate === twoDaysAgoStr && weeklyBudget >= 1 && graceRemaining >= 1 && steadyDays > 0) {
+      // Missed 1 day — use 1 grace (Foundation+ only; within weekly budget)
       const newStreak = steadyDays + 1;
       setSteadyDays(newStreak);
       if (newStreak > bestStreak) setBestStreak(newStreak);
       setGraceUsedWeek({ week: currentWeekKey, count: graceCount + 1 });
-    } else if (lastActiveDate === threeDaysAgoStr && graceRemaining >= 2 && steadyDays > 0) {
-      // Missed 2 consecutive days — use 2 grace days
+    } else if (lastActiveDate === threeDaysAgoStr && weeklyBudget >= 2 && graceRemaining >= 2 && steadyDays > 0) {
+      // Missed 2 consecutive days — use 2 graces (Deep only)
       const newStreak = steadyDays + 1;
       setSteadyDays(newStreak);
       if (newStreak > bestStreak) setBestStreak(newStreak);
@@ -13097,6 +16059,63 @@ useEffect(() => {
     }
     setTotalActiveDays(prev => prev + 1);
     setLastActiveDate(todayStr);
+  };
+
+  // AI-generated archive for Past Reflections (Foundation+ paid only; caller gates).
+  const saveReflectionSummary = async (sessionData, transcript) => {
+    if (!sessionData || !transcript || !transcript.length) return;
+    const lines = transcript
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => `${m.role}: ${m.content}`);
+    if (!lines.length) return;
+    const body = lines.join("\n").slice(0, 14000);
+    try {
+      const r = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 500,
+          messages: [
+            {
+              role: "user",
+              content: `You archive private reflection sessions. Read the conversation (user and assistant only). Return ONLY valid JSON, no markdown: {"keyThemes":["2-4 short theme labels"],"summary":"3-5 sentences on what was explored and what mattered — emotionally and spiritually. Warm, specific, dignified. Not clinical."}\n\nSession focus: ${sessionData.category || "Reflection"}.\n\nConversation:\n${body}`,
+            },
+          ],
+        }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error?.message || "API error");
+      const raw = d.content.map((b) => b.text || "").join("").trim();
+      const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+      const entry = {
+        id: sessionData.id,
+        date: sessionData.date,
+        category: sessionData.category,
+        categoryIcon: sessionData.categoryIcon,
+        keyThemes: Array.isArray(parsed.keyThemes) ? parsed.keyThemes.slice(0, 6) : [],
+        aiSummary: typeof parsed.summary === "string" ? parsed.summary : "",
+        insight: sessionData.insight,
+        takeaway: sessionData.takeaway,
+        action: sessionData.action,
+      };
+      setSavedReflections((prev) => [entry, ...prev.filter((x) => x.id !== entry.id)].slice(0, 100));
+    } catch {
+      const entry = {
+        id: sessionData.id,
+        date: sessionData.date,
+        category: sessionData.category,
+        categoryIcon: sessionData.categoryIcon,
+        keyThemes: sessionData.category ? [sessionData.category] : ["Reflection"],
+        aiSummary:
+          [sessionData.insight, sessionData.takeaway].filter(Boolean).join(" ") ||
+          "A reflection session you completed — your session card on Progress still holds your insight.",
+        insight: sessionData.insight,
+        takeaway: sessionData.takeaway,
+        action: sessionData.action,
+      };
+      setSavedReflections((prev) => [entry, ...prev.filter((x) => x.id !== entry.id)].slice(0, 100));
+    }
   };
 
   // Check streak on app load — reset only if missed more than grace allows
@@ -13115,15 +16134,16 @@ useEffect(() => {
     weekStart.setDate(now.getDate() - dayOfWeek + 1);
     const currentWeekKey = getDateStr(weekStart);
     const graceCount = (graceUsedWeek?.week === currentWeekKey) ? (graceUsedWeek?.count || 0) : 0;
-    const graceRemaining = 2 - graceCount;
+    const weeklyBudget = weeklyStreakGraceBudget(effectiveTier, isTrialActive);
+    const graceRemaining = weeklyBudget - graceCount;
 
     const threeDaysAgo = new Date();
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
     const threeDaysAgoStr = getDateStr(threeDaysAgo);
 
     if (lastActiveDate === todayStr || lastActiveDate === yesterdayStr) return;
-    if (lastActiveDate === twoDaysAgoStr && graceRemaining >= 1 && steadyDays > 0) return;
-    if (lastActiveDate === threeDaysAgoStr && graceRemaining >= 2 && steadyDays > 0) return;
+    if (lastActiveDate === twoDaysAgoStr && weeklyBudget >= 1 && graceRemaining >= 1 && steadyDays > 0) return;
+    if (lastActiveDate === threeDaysAgoStr && weeklyBudget >= 2 && graceRemaining >= 2 && steadyDays > 0) return;
     setSteadyDays(0);
   }, [appScreen]);
 
@@ -13132,36 +16152,66 @@ useEffect(() => {
     if (appScreen === "main") trackEvent("app_open", { tier: tier, name: userName || "", streak: steadyDays || 0 });
   }, [appScreen]);
 
+  useEffect(() => {
+    try {
+      if (journeyProgress.completed?.length) {
+        localStorage.setItem("selah_journeys_completed", JSON.stringify(journeyProgress.completed));
+      }
+    } catch (e) {}
+  }, [journeyProgress.completed]);
+
   // Save state on every change
   useEffect(() => {
     saveToStorage({
       appScreen: appScreen === "main" ? "main" : appScreen,
       themeId, fontId, faithLevel, userName, tier, trialStart, steadyDays, sessionCount,
-      sharingEnabled, pushEnabled, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
+      sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour,
+      dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
       journalEntries, moodHistory, lastVisit: Date.now(),
       feedbackEntries, lastFeedbackPrompt,
-      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, assessmentResults, userEmail, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
+      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, journeyProgress, sessionHistory, savedReflections, assessmentResults, userEmail, foundingMember, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
+      appLockEnabled, appLockMethod, appLockPinHash, appLockWebAuthnCredentialId, appLockOnboardingDone,
     });
     // Cloud sync if logged in
     if (authToken) {
       const syncData = {
         appScreen: appScreen === "main" ? "main" : appScreen,
         themeId, fontId, faithLevel, userName, tier, trialStart, steadyDays, sessionCount,
-        sharingEnabled, pushEnabled, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
+        sharingEnabled, pushEnabled, dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
         journalEntries, moodHistory, lastVisit: Date.now(),
         feedbackEntries, lastFeedbackPrompt,
-        lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, assessmentResults, userEmail, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
+        lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, journeyProgress, sessionHistory, savedReflections, assessmentResults, userEmail, foundingMember, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
       };
       fetch("/api/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authToken}` },
         body: JSON.stringify({ data: syncData })
-      }).then(()=>setSyncStatus("synced")).catch(()=>setSyncStatus("error"));
+      })
+        .then(async (r) => {
+          if (!r.ok) {
+            let msg = "Couldn’t back up to the cloud.";
+            try {
+              const j = await r.json();
+              if (j && typeof j.error === "string") msg = j.error;
+            } catch (_) {}
+            setSyncStatus("error");
+            setSyncError(msg);
+            return;
+          }
+          setSyncStatus("synced");
+          setSyncError(null);
+        })
+        .catch(() => {
+          setSyncStatus("error");
+          setSyncError("Couldn’t reach the server. Check your connection.");
+        });
     }
   }, [appScreen, themeId, fontId, faithLevel, userName, tier, trialStart, steadyDays,
-      sessionCount, sharingEnabled, pushEnabled, isMinorUser, tone, quoteFreq, onboardingAnswers,
+      sessionCount, sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour,
+      dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers,
       isFirstVisit, journalEntries, moodHistory, feedbackEntries, lastFeedbackPrompt,
-      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, sessionHistory, assessmentResults, userEmail, stripeEmail, seasonalMode, letters, gratitudeLog]);
+      lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, journeyProgress, sessionHistory, savedReflections, assessmentResults, userEmail, foundingMember, stripeEmail, seasonalMode, letters, gratitudeLog,
+      appLockEnabled, appLockMethod, appLockPinHash, appLockWebAuthnCredentialId, appLockOnboardingDone]);
 
   // Track returning users
   useEffect(() => {
@@ -13169,6 +16219,54 @@ useEffect(() => {
       const hoursSince = (Date.now() - lastVisit) / (1000 * 60 * 60);
     }
   }, []);
+
+  // App lock: lock when app goes to background (main app only)
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "hidden" && appLockEnabled && appScreen === "main") {
+        setAppLocked(true);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [appLockEnabled, appScreen]);
+
+  // Sync optional push notification prefs (guided / evening prayer) to Redis via push-subscribe
+  useEffect(() => {
+    if (!pushEnabled) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const subscription = await reg.pushManager.getSubscription();
+        if (!subscription || cancelled) return;
+        await fetch("/api/push-subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subscription,
+            userId: localStorage.getItem("selah_user_id") || "anon",
+            email: userEmail || "",
+            guidedPrayerEnabled: !!pushGuidedPrayerEnabled,
+            guidedPrayerHour: parseInt(pushGuidedPrayerHour, 10),
+            eveningPrayerEnabled: !!pushEveningPrayerEnabled,
+            eveningPrayerHour: parseInt(pushEveningPrayerHour, 10),
+            tzOffsetMinutes: new Date().getTimezoneOffset(),
+          }),
+        });
+      } catch (e) {
+        console.error("Push prefs sync:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [
+    pushEnabled,
+    pushGuidedPrayerEnabled,
+    pushGuidedPrayerHour,
+    pushEveningPrayerEnabled,
+    pushEveningPrayerHour,
+    userEmail,
+  ]);
 
   // Register service worker for push notifications
   useEffect(() => {
@@ -13269,6 +16367,9 @@ useEffect(() => {
         localStorage.removeItem("selah_auth_token");
         setAuthToken(null);
         setUserEmail(null);
+        setFoundingMember(false);
+        setSyncStatus(null);
+        setSyncError(null);
       }
     }).catch(()=>{});
   }, []);
@@ -13385,7 +16486,7 @@ useEffect(() => {
           showLateNight={showLateNight} sharingEnabled={sharingEnabled}
           onboardingAnswers={onboardingAnswers} faithLevel={faithLevel}
           isFirstVisit={isFirstVisit} onDismissWelcome={()=>{setIsFirstVisit(false);setShowTutorial(false);}}
-          showTutorial={showTutorial} setShowTutorial={setShowTutorial}
+          showTutorial={showTutorial && appLockOnboardingDone} setShowTutorial={setShowTutorial}
           onLogMood={logMood} onActive={markActive}
           lastFeedbackPrompt={lastFeedbackPrompt}
           onDismissFeedback={()=>setLastFeedbackPrompt(Date.now())}
@@ -13394,7 +16495,7 @@ useEffect(() => {
           tier={effectiveTier} isTrialActive={isTrialActive} onUpgrade={()=>setShowSub(true)}
           moodHistory={moodHistory} sessionHistory={sessionHistory} journalEntries={journalEntries} setJournalEntries={setJournalEntries}
           seasonalMode={seasonalMode} setSeasonalMode={setSeasonalMode} currentSeason={currentSeason}
-          graceUsedWeek={graceUsedWeek} benchItems={benchItems} setBenchItems={setBenchItems}/>
+          graceUsedWeek={graceUsedWeek} weeklyGraceBudget={weeklyGraceBudget} benchItems={benchItems} setBenchItems={setBenchItems}/>
       );
       case "reflect": {
         if (!hasAccess(effectiveTier, "foundation", isTrialActive)) {
@@ -13416,23 +16517,96 @@ useEffect(() => {
             </div>
           );
         }
+        if (isTrialActive && countReflectSessionsToday(sessionHistory) >= 2) {
+          return (
+            <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
+              padding:"60px 20px", boxSizing:"border-box" }}>
+              <div style={{ maxWidth:"480px", margin:"0 auto" }}>
+                <button type="button" onClick={()=>setScreen("home")} style={{ background:"none",border:"none",
+                  cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
+                <div style={{ textAlign:"center", marginBottom:"24px" }}>
+                  <div style={{ fontSize:"40px", marginBottom:"12px" }}>🌿</div>
+                  <p style={{ color:C.amber, fontSize:"10px", letterSpacing:"2.5px", textTransform:"uppercase", fontStyle:"italic", margin:"0 0 8px" }}>Trial · Daily limit</p>
+                  <h1 style={{ color:C.textPrimary, fontSize:"clamp(18px,4vw,22px)", fontWeight:"normal", margin:"0 0 12px", lineHeight:1.4 }}>
+                    You’ve had 2 reflections today
+                  </h1>
+                  <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:1.85, margin:0 }}>
+                    During your trial, Selah offers two AI reflection sessions per day. Come back tomorrow — or subscribe for more whenever you’re ready.
+                  </p>
+                </div>
+                <button type="button" onClick={()=>setShowSub(true)} style={{
+                  width:"100%", background:C.accent, border:"none", borderRadius:"3px", color:"#fff",
+                  fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", padding:"16px", cursor:"pointer", fontFamily:font, fontStyle:"italic", marginBottom:"12px" }}>
+                  View plans
+                </button>
+                <button type="button" onClick={()=>setScreen("home")} style={{
+                  width:"100%", background:"transparent", border:`1px solid ${C.border}`, borderRadius:"3px", color:C.textMuted,
+                  fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", padding:"14px", cursor:"pointer", fontFamily:font }}>
+                  Home
+                </button>
+              </div>
+            </div>
+          );
+        }
         return (
           <ReflectScreen C={SC} font={font} setScreen={setScreen}
             faithLevel={faithLevel} sessionCount={sessionCount} tone={tone}
             isMinorUser={isMinorUser}
             tier={effectiveTier} sessionHistory={sessionHistory}
+            isTrialActive={isTrialActive}
+            moodHistory={moodHistory}
             seasonalContext={(seasonalMode && currentSeason?.reflectContext) ? currentSeason.reflectContext : null}
-            onSessionComplete={(sessionData)=>{
+            onSessionComplete={(sessionData, transcript)=>{
               setSessionCount(s=>s+1);
               markActive();
+              try { markMissionTask(1); } catch (e) {}
               trackEvent("session_complete", { category: sessionData?.category || "unknown" });
               if(sessionData) setSessionHistory(prev=>[sessionData,...prev].slice(0,50));
+              if (sessionData && (TIER_LEVELS[effectiveTier]||0) >= TIER_LEVELS.foundation && !isTrialActive) {
+                saveReflectionSummary(sessionData, transcript);
+              }
             }}
             onboardingAnswers={onboardingAnswers} userName={userName}
-            setBenchItems={setBenchItems}/>
+            setBenchItems={setBenchItems}
+            savedReflections={savedReflections}
+            canSavePastReflections={(TIER_LEVELS[effectiveTier]||0) >= TIER_LEVELS.foundation && !isTrialActive}
+            onUpgrade={()=>setShowSub(true)}/>
         );
       }
-      case "journal": return <JournalScreen C={C} font={font} setScreen={setScreen} entries={journalEntries} setEntries={setJournalEntries} onActive={markActive}/>;
+      case "guidedprayer": {
+        if (!hasAccess(effectiveTier, "foundation", isTrialActive)) {
+          return (
+            <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
+              padding:"60px 20px", boxSizing:"border-box" }}>
+              <div style={{ maxWidth:"480px", margin:"0 auto" }}>
+                <button onClick={()=>setScreen("home")} style={{ background:"none",border:"none",
+                  cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
+                <UpgradeGate C={C} font={font}
+                  feature="Guided Prayer"
+                  requiredTier="foundation"
+                  onUpgrade={()=>setShowSub(true)}/>
+                <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
+                  textAlign:"center", lineHeight:"1.8", marginTop:"16px" }}>
+                  Subscribe to open guided prayer alongside your reflection journey.
+                </p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <GuidedPrayerScreen C={SC} font={font} setScreen={setScreen}
+            tier={effectiveTier}
+            faithLevel={faithLevel} userName={userName} onboardingAnswers={onboardingAnswers}
+            isMinorUser={isMinorUser} tone={tone}
+            isTrialActive={isTrialActive}
+            onUpgrade={()=>setShowSub(true)}
+            onStructuredComplete={()=>{ markActive(); try { localStorage.setItem("selah_mission_guided_done", "1"); markMissionTask(2); } catch (e) {} trackEvent("guided_prayer", { mode:"structured" }); }}
+            onAiComplete={()=>{ markActive(); try { localStorage.setItem("selah_mission_guided_done", "1"); markMissionTask(2); } catch (e) {} trackEvent("guided_prayer", { mode:"ai" }); }}
+            onEveningComplete={()=>{ markActive(); try { localStorage.setItem("selah_mission_guided_done", "1"); markMissionTask(2); } catch (e) {} trackEvent("guided_prayer", { mode:"evening" }); }}
+          />
+        );
+      }
+      case "journal": return <JournalScreen C={C} font={font} setScreen={setScreen} entries={journalEntries} setEntries={setJournalEntries} onActive={markActive} onNotebookSaved={()=>{ try { markMissionTask(3); } catch (e) {} }}/>;
       case "progress": {
         if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.growth) {
           return (
@@ -13451,7 +16625,7 @@ useEffect(() => {
         }
         return <ProgressScreen C={C} font={font} setScreen={setScreen} steadyDays={steadyDays} sessionCount={sessionCount} moodHistory={moodHistory} bestStreak={bestStreak} totalActiveDays={totalActiveDays} sessionHistory={sessionHistory} journalEntries={journalEntries} tier={effectiveTier} onUpgrade={()=>setShowSub(true)}/>;
       }
-      case "breathe": return <BreathingExercise C={C} font={font} onClose={()=>setScreen("home")}/>;
+      case "breathe": return <BreathingExercise C={C} font={font} onSessionComplete={()=>{ try { markMissionTask(4); } catch (e) {} }} onClose={()=>setScreen("home")}/>;
       case "prayerwall":
         return <PrayerWallScreen C={SC} font={font}
           tier={effectiveTier} isTrialActive={isTrialActive}
@@ -13464,6 +16638,31 @@ useEffect(() => {
         return <TheBenchScreen C={SC} font={font} setScreen={setScreen}
           benchItems={benchItems} setBenchItems={setBenchItems}/>;
       }
+      case "journeys": {
+        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation || isTrialActive) {
+          return (
+            <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
+              padding:"60px 20px", boxSizing:"border-box" }}>
+              <div style={{ maxWidth:"480px", margin:"0 auto" }}>
+                <button type="button" onClick={()=>setScreen("home")} style={{ background:"none",border:"none",
+                  cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
+                <UpgradeGate C={C} font={font}
+                  feature="Seasonal Journeys"
+                  requiredTier="foundation"
+                  onUpgrade={()=>setShowSub(true)}/>
+                <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
+                  textAlign:"center", lineHeight:"1.8", marginTop:"16px" }}>
+                  Fourteen-day guided paths — paid Foundation+ and above. Trial unlocks many features; journeys stay a subscriber gift.
+                </p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <JourneysScreen C={SC} font={font} setScreen={setScreen}
+            journeyProgress={journeyProgress} setJourneyProgress={setJourneyProgress} />
+        );
+      }
       case "armorup": {
         if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.growth) {
           setShowSub(true); setScreen("home"); return null;
@@ -13474,7 +16673,17 @@ useEffect(() => {
           onClose={() => setScreen("home")}/>;
       }
       case "heavyday":
-        return <HeavyDayScreen C={C} font={font} faithLevel={faithLevel} userName={userName} onClose={()=>setScreen("home")}/>;
+        return <HeavyDayScreen C={C} font={font} faithLevel={faithLevel} userName={userName}
+          onHeavyDayComplete={()=>{
+            try {
+              const hasF = (TIER_LEVELS[effectiveTier] || 0) >= TIER_LEVELS.foundation || isTrialActive;
+              if (!hasF) {
+                localStorage.setItem("selah_mission_heavy_done", "1");
+                markMissionTask(5);
+              }
+            } catch (e) {}
+          }}
+          onClose={()=>setScreen("home")}/>;
       case "bestill": {
         // Reset requires Foundation+ — paid only, trial does NOT unlock
         if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation) {
@@ -13552,13 +16761,19 @@ useEffect(() => {
           faithLevel={faithLevel} setFaithLevel={setFaithLevel}
           sharingEnabled={sharingEnabled} setSharingEnabled={setSharingEnabled}
           pushEnabled={pushEnabled} setPushEnabled={setPushEnabled}
+          pushGuidedPrayerEnabled={pushGuidedPrayerEnabled} setPushGuidedPrayerEnabled={setPushGuidedPrayerEnabled}
+          pushGuidedPrayerHour={pushGuidedPrayerHour} setPushGuidedPrayerHour={setPushGuidedPrayerHour}
+          pushEveningPrayerEnabled={pushEveningPrayerEnabled} setPushEveningPrayerEnabled={setPushEveningPrayerEnabled}
+          pushEveningPrayerHour={pushEveningPrayerHour} setPushEveningPrayerHour={setPushEveningPrayerHour}
+          dailyReminderHour={dailyReminderHour} setDailyReminderHour={setDailyReminderHour}
           tone={tone} setTone={setTone}
           quoteFreq={quoteFreq} setQuoteFreq={setQuoteFreq}
           onSubscription={()=>setShowSub(true)}
           onFounder={()=>setShowFounder(true)}
           tier={effectiveTier} trialDaysLeft={trialDaysLeft}
+          isTrialActive={isTrialActive}
           onReset={()=>{clearStorage();localStorage.removeItem("selah_auth_token");window.location.reload();}}
-          userEmail={userEmail} authToken={authToken} syncStatus={syncStatus}
+          userEmail={userEmail} authToken={authToken} syncStatus={syncStatus} syncError={syncError} foundingMember={foundingMember}
           onLogin={async(email, code)=>{
             const r = await fetch("/api/auth",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"verify-code",email,code,trialStart:trialStart||null})});
             const d = await r.json();
@@ -13584,6 +16799,9 @@ useEffect(() => {
                   if(cloud.journalEntries?.length>journalEntries.length) setJournalEntries(cloud.journalEntries);
                   if(cloud.moodHistory?.length>moodHistory.length) setMoodHistory(cloud.moodHistory);
                   if(cloud.sessionHistory?.length>sessionHistory.length) setSessionHistory(cloud.sessionHistory);
+                  if (Array.isArray(cloud.savedReflections) && cloud.savedReflections.length) {
+                    setSavedReflections((prev) => mergeSavedReflections(prev, cloud.savedReflections));
+                  }
                   if(cloud.steadyDays>steadyDays) setSteadyDays(cloud.steadyDays);
                   if(cloud.bestStreak>bestStreak) setBestStreak(cloud.bestStreak);
                   if(cloud.totalActiveDays>totalActiveDays) setTotalActiveDays(cloud.totalActiveDays);
@@ -13591,9 +16809,13 @@ useEffect(() => {
                   if(cloud.assessmentResults&&Object.keys(cloud.assessmentResults).length>Object.keys(assessmentResults).length) setAssessmentResults(cloud.assessmentResults);
                   if(cloud.feedbackEntries?.length>feedbackEntries.length) setFeedbackEntries(cloud.feedbackEntries);
                   if(cloud.benchItems?.length>benchItems.length) setBenchItems(cloud.benchItems);
+                  if (cloud.journeyProgress?.byJourney || cloud.journeyProgress?.completed?.length)
+                    setJourneyProgress((prev) => mergeJourneyProgressState(prev, cloud.journeyProgress));
                   if(cloud.onboardingAnswers&&Object.keys(cloud.onboardingAnswers).length>0&&!onboardingAnswers?.name) setOnboardingAnswers(cloud.onboardingAnswers);
                   if(cloud.tier&&cloud.tier!=="free") setTier(cloud.tier);
                   if(cloud.stripeEmail) setStripeEmail(cloud.stripeEmail);
+                  if(typeof cloud.foundingMember === "boolean") setFoundingMember(cloud.foundingMember);
+                  if (cloud.dailyReminderHour != null) setDailyReminderHour(normalizeDailyReminderHour(cloud.dailyReminderHour));
                 }
               }catch{}
               // Also check Stripe directly for active subscription
@@ -13614,6 +16836,9 @@ useEffect(() => {
             localStorage.removeItem("selah_auth_token");
             setAuthToken(null);
             setUserEmail(null);
+            setFoundingMember(false);
+            setSyncStatus(null);
+            setSyncError(null);
           }}
           onSendCode={async(email)=>{
             const r=await fetch("/api/auth",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"send-code",email})});
@@ -13622,7 +16847,20 @@ useEffect(() => {
           autoLoginEmail={autoLoginEmail}
           onClearAutoLogin={()=>setAutoLoginEmail(null)}
           seasonalMode={seasonalMode} setSeasonalMode={setSeasonalMode} currentSeason={currentSeason}
-          onShowTour={()=>{ setShowTutorial(true); setScreen("home"); }}/>
+          onShowTour={()=>{ setShowTutorial(true); setScreen("home"); }}
+          appLockEnabled={appLockEnabled}
+          appLockMethod={appLockMethod}
+          webAuthnAvailable={webAuthnSupported()}
+          onAppLockConfigure={()=>setShowAppLockSettingsModal(true)}
+          onAppLockDisable={()=>{
+            if (typeof window !== "undefined" && window.confirm("Turn off app lock? Your PIN and device key will be removed on this device.")) {
+              setAppLockEnabled(false);
+              setAppLockMethod("pin");
+              setAppLockPinHash("");
+              setAppLockWebAuthnCredentialId("");
+              setAppLocked(false);
+            }
+          }}/>
       );
       case "resources": {
         if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.growth) {
@@ -13662,7 +16900,7 @@ useEffect(() => {
             </div>
           );
         }
-        return <BibleStoriesScreen C={C} font={font} setScreen={setScreen} faithLevel={faithLevel}/>;
+        return <BibleStoriesScreen C={C} font={font} setScreen={setScreen} faithLevel={faithLevel} tier={effectiveTier} isTrialActive={isTrialActive}/>;
       }
       case "assessments": {
         if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.deep) {
@@ -13727,7 +16965,14 @@ useEffect(() => {
                 if(cloud.journalEntries?.length>journalEntries.length) setJournalEntries(cloud.journalEntries);
                 if(cloud.moodHistory?.length>moodHistory.length) setMoodHistory(cloud.moodHistory);
                 if(cloud.sessionHistory?.length>sessionHistory.length) setSessionHistory(cloud.sessionHistory);
+                if (Array.isArray(cloud.savedReflections) && cloud.savedReflections.length) {
+                  setSavedReflections((prev) => mergeSavedReflections(prev, cloud.savedReflections));
+                }
+                if(typeof cloud.foundingMember === "boolean") setFoundingMember(cloud.foundingMember);
                 if(cloud.steadyDays>steadyDays) setSteadyDays(cloud.steadyDays);
+                if (cloud.dailyReminderHour != null) setDailyReminderHour(normalizeDailyReminderHour(cloud.dailyReminderHour));
+                if (cloud.journeyProgress?.byJourney || cloud.journeyProgress?.completed?.length)
+                  setJourneyProgress((prev) => mergeJourneyProgressState(prev, cloud.journeyProgress));
                 if(cloud.onboardingAnswers?.name){
                   setOnboardingAnswers(cloud.onboardingAnswers);
                   // Returning user — skip onboarding, go straight to main
@@ -13760,6 +17005,9 @@ useEffect(() => {
             else if(answers.gender==="Woman") setThemeId("warm");
             else setThemeId("warm");
             if(answers.isMinor) setIsMinorUser(true);
+            if (answers.pauseTime != null && String(answers.pauseTime).trim() !== "") {
+              setDailyReminderHour(normalizeDailyReminderHour(answers.pauseTime));
+            }
             setOnboardingAnswers(answers);
             setAppScreen("firstwelcome");
           }}/>
@@ -13815,8 +17063,36 @@ useEffect(() => {
         </div>
       )}
 
-      {!showSub&&screen!=="breathe"&&screen!=="checkin"&&screen!=="bestill"&&screen!=="armorup"&&screen!=="prayerwall"&&screen!=="bench"&&(
+      {!showSub && !HIDE_BOTTOM_NAV_SCREENS.has(screen) && (
         <BottomNav screen={screen} setScreen={setScreen} C={C} font={font} adminMode={adminMode}/>
+      )}
+
+      {appScreen === "main" && !showSub && showTutorial && !appLockOnboardingDone && isFirstVisit && (
+        <AppLockSetupModal
+          mode="firstRun"
+          C={SC}
+          font={font}
+          onSkip={() => setAppLockOnboardingDone(true)}
+          onSetupComplete={applyAppLockSetup}
+        />
+      )}
+      {showAppLockSettingsModal && (
+        <AppLockSetupModal
+          mode="settings"
+          C={SC}
+          font={font}
+          onSkip={() => setShowAppLockSettingsModal(false)}
+          onSetupComplete={applyAppLockSetup}
+          onClose={() => setShowAppLockSettingsModal(false)}
+        />
+      )}
+      {appLocked && appLockEnabled && appScreen === "main" && appLockPinHash && (
+        <AppLockScreen
+          appLockMethod={appLockMethod}
+          appLockPinHash={appLockPinHash}
+          appLockWebAuthnCredentialId={appLockWebAuthnCredentialId}
+          onUnlocked={unlockApp}
+        />
       )}
 
       {showFounder&&<FounderNote C={C} font={font} onClose={()=>setShowFounder(false)}/>}
