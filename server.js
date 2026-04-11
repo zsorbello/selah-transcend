@@ -27,7 +27,7 @@ app.use('/api/stripe-webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
 app.use(express.static(path.join(__dirname, 'dist')));
-app.use('/public', express.static(path.join(__dirname, 'public')));
+
 
 app.all('/api/analytics', analytics);
 app.all('/api/auth', auth);
