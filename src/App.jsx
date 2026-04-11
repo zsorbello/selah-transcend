@@ -1326,20 +1326,20 @@ function LandingPage({ onEnter, C, font }) {
             gap:"10px", margin:"20px 0" }}>
             <div style={{ width:"40px", height:"1px", background:"#8FA38A", opacity:0.4 }}/>
             <span style={{ color:"#9E9E98", fontSize:"10px", letterSpacing:"5px",
-              textTransform:"uppercase", fontStyle:"italic" }}>A Space to Think Clearly</span>
+              textTransform:"uppercase", fontStyle:"italic" }}>Straight talk · Real faith</span>
             <div style={{ width:"40px", height:"1px", background:"#8FA38A", opacity:0.4 }}/>
           </div>
 
           <h1 style={{ color:"#2C2C2A", fontSize:"clamp(28px,7vw,48px)",
             fontWeight:"normal", margin:"0 0 20px", lineHeight:"1.3",
             letterSpacing:"-0.01em" }}>
-            You don't need another app.<br/>
-            <span style={{ color:"#8FA38A" }}>You need a place to be honest.</span>
+            You carry weight you don&apos;t advertise.<br/>
+            <span style={{ color:"#8FA38A" }}>God already sees it — say it straight.</span>
           </h1>
 
           <p style={{ color:"#6B6B66", fontSize:"clamp(14px,3vw,17px)", fontStyle:"italic",
             lineHeight:"2", margin:"0 0 40px", maxWidth:"460px", marginLeft:"auto", marginRight:"auto" }}>
-            Selah is a guided reflection companion — rooted in faith, backed by psychology, and built for people who carry more than they show.
+            Prayer and reflection for when you&apos;re done performing strength you don&apos;t have. No therapy script, no soft sell — scripture, honesty, and room to tell the truth before God.
           </p>
 
           <button onClick={onEnter} style={{
@@ -1351,7 +1351,7 @@ function LandingPage({ onEnter, C, font }) {
             transition:"all 0.3s ease" }}
             onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 8px 30px rgba(143,163,138,0.45)";}}
             onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 4px 20px rgba(143,163,138,0.35)";}}>
-            Begin Your First Reflection
+            Enter Selah
           </button>
 
           <p style={{ color:"#9E9E98", fontSize:"12px", fontStyle:"italic", margin:"16px 0 0" }}>
