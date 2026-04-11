@@ -1,4 +1,4 @@
-const CACHE_NAME = 'selah-v11';
+const CACHE_NAME = 'selah-v12';
 
 // Install
 self.addEventListener('install', () => { self.skipWaiting(); });
@@ -117,4 +117,5 @@ self.addEventListener('notificationclick', (event) => {
     })
   );
 });
+
 
