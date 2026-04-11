@@ -2419,24 +2419,27 @@ function FirstTimeWelcome({ C, font, userName, onboardingAnswers, onReflect, onE
   useEffect(() => { setTimeout(() => setVisible(true), 100); }, []);
 
   // Build a personal line from their onboarding answers
-  const reasons = onboardingAnswers?.reasons || [];
+  const reasonsRaw = onboardingAnswers?.reasons;
+  const reasonsFirst = Array.isArray(reasonsRaw) ? (reasonsRaw[0] || "") : (reasonsRaw || "");
   const goal = onboardingAnswers?.goal || "";
   const heaviest = onboardingAnswers?.biggest || "";
 
   const personalLine = goal
     ? `You want to become someone who ${goal.toLowerCase().replace(/^i want to become someone who /i,"")}.`
-    : reasons.length > 0
-    ? `You came here about ${reasons[0].toLowerCase()}.`
+    : reasonsFirst
+    ? `You came here: ${reasonsFirst}`
     : "You showed up. That already matters.";
 
-  const heaviestLine = heaviest === "Something from my past"
-    ? "Whatever you're carrying from the past — this is a safe place to put it down."
-    : heaviest === "Pressure about my future"
+  const heaviestLine = heaviest === "Anxiety about my future"
     ? "The pressure you're feeling about the future — we'll work through it together."
-    : heaviest === "Who I am and my worth"
+    : heaviest === "Something I did or didn't do"
+    ? "Guilt and regret are heavy — you don't have to sort them alone here."
+    : heaviest === "A relationship that's breaking me"
+    ? "Relationships that are breaking you — this is a place to think clearly about them."
+    : heaviest === "Who I am and whether I'm enough"
     ? "Questions about your worth and identity — those are worth sitting with."
-    : heaviest === "A relationship that's hurting me"
-    ? "Relationships that are hurting — this is a place to think clearly about them."
+    : heaviest === "Grief or loss"
+    ? "Grief and loss take time — this space can hold what you're carrying."
     : "Whatever weight you're carrying — this space was built for exactly that.";
 
   return (
@@ -2548,24 +2551,26 @@ function OnboardingScreen({ onDone, C, font }) {
       opts:["Under 13","13-15","16-17","18-24","25-34","35-44","45+"] },
     { id:"parentEmail", q:"Since you're under 18, we need a parent or guardian's approval to keep you safe.", type:"parentConsent",
       placeholder:"Parent or guardian's email address..." },
-    { id:"reasons", q:"What brought you here today?", type:"multi",
-      opts:["Anxiety & overthinking","Low mood or depression","Self-worth & confidence","Lack of direction","Relationship struggles","Faith questions","Addiction & recovery","Anger & frustration","Loneliness & isolation","I just need somewhere to think"] },
-    { id:"feeling", q:"Honestly — how are you feeling right now?", type:"scale", min:1, max:10 },
-    { id:"biggest", q:"What's the heaviest thing you're carrying right now?", type:"single",
-      opts:["Something from my past","Pressure about my future","Who I am and my worth","A relationship that's hurting me","I'm not sure — just weight"] },
-    { id:"pattern", q:"When things get hard, what do you usually do?", type:"single",
-      opts:["Go quiet and shut down","Get angry or frustrated","Stay busy and distract myself","Spiral in my own head","Reach out — I try to talk about it"] },
     { id:"gender", q:"How do you identify? (This helps Selah speak to you correctly)", type:"single",
       opts:["Man","Woman","Prefer not to say"] },
-    { id:"faith", q:"How would you like faith woven into your experience?", type:"single",
-      opts:["None — keep it secular","Minimal — only if I bring it up","Balanced — woven in naturally","Faith-forward — scripture & prayer"] },
-    { id:"tone", q:"How do you want Selah to speak to you?", type:"single",
-      opts:["Direct & grounded — tell it straight","Warm & gentle — meet me softly","Structured & focused — help me think clearly","Spiritually grounded — lead with faith"] },
+    { id:"feeling", q:"Honestly — how are you feeling right now?", type:"scale", min:1, max:10 },
+    { id:"reasons", q:"Something brought you to this moment. What was it?", type:"single",
+      opts:["I've been overwhelmed and needed somewhere to go", "I'm searching for something I can't quite name", "I want to grow — mentally, spiritually, emotionally", "Life hit hard recently and I'm still processing it", "I'm just curious"] },
+    { id:"biggest", q:"What's the heaviest thing you're carrying right now?", type:"single",
+      opts:["Anxiety about my future", "Something I did or didn't do", "A relationship that's breaking me", "Who I am and whether I'm enough", "Grief or loss", "I don't know yet — just heavy"] },
+    { id:"pattern", q:"When the pressure builds, what do you do?", type:"single",
+      opts:["Go silent and disappear into myself", "Stay busy so I don't have to feel it", "Reach out — I need people around me", "I pray or journal but it doesn't always help", "I have no idea — I just survive it"] },
+    { id:"tone", q:"How do you want to be spoken to?", type:"single",
+      opts:["Direct and honest — don't sugarcoat it", "Gentle — I'm fragile right now", "Grounded in scripture and faith", "Like a friend who just gets it", "Challenge me — I need to be pushed"] },
     { id:"avoid", q:"What do you most want to avoid feeling when you use Selah?", type:"single",
       opts:["Judged or analyzed","Preached at","Pressured to be positive","Like just another therapy app","Weak for being here"] },
+    { id:"needMost", q:"What do you need most right now?", type:"single",
+      opts:["Someone to listen without judgment", "Clarity on what I'm feeling", "Peace — my mind won't stop", "Strength to keep going", "Hope — I'm running low"] },
     { id:"goal", q:"Last one — complete this sentence: \"I want to become someone who...\"", type:"word",
       placeholder:"...is at peace. ...shows up. ...trusts himself. ...doesn't give up." },
     { id:"pauseTime", q:"When would you like to pause with Selah?", type:"pauseTime" },
+    { id:"faith", q:"Where are you with God right now — be honest.", type:"single",
+      opts:["Close. Faith is everything to me", "Somewhere in the middle — I believe but I'm wrestling", "Distant. I want to find my way back", "Not sure what I believe yet", "I'm not religious but I'm open"] },
   ];
 
   // Filter questions based on age
@@ -8438,10 +8443,12 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     onboardingAnswers.name && `Their name is ${onboardingAnswers.name}.`,
     onboardingAnswers.reasons && `They came to Selah for: ${Array.isArray(onboardingAnswers.reasons)?onboardingAnswers.reasons.join(", "):onboardingAnswers.reasons}.`,
     onboardingAnswers.biggest && `Heaviest thing they carry: "${onboardingAnswers.biggest}".`,
-    onboardingAnswers.pattern && `Coping pattern: "${onboardingAnswers.pattern}".`,
+    onboardingAnswers.pattern && `When pressure builds they: "${onboardingAnswers.pattern}".`,
     onboardingAnswers.goal && `Goal: "I want to become someone who ${onboardingAnswers.goal}".`,
     onboardingAnswers.avoid && `They want to avoid feeling: "${onboardingAnswers.avoid}".`,
     onboardingAnswers.tone && `Preferred tone: "${onboardingAnswers.tone}".`,
+    onboardingAnswers.needMost && `What they need most right now: "${onboardingAnswers.needMost}".`,
+    onboardingAnswers.faith && `Where they are with God: "${onboardingAnswers.faith}".`,
     onboardingAnswers.gender && onboardingAnswers.gender !== "Prefer not to say" && `They identify as: ${onboardingAnswers.gender}.`,
   ].filter(Boolean).join(" ") : "";
 
@@ -17001,7 +17008,15 @@ useEffect(() => {
         <OnboardingScreen C={C} font={font}
           onDone={(answers)=>{
             if(answers.name){const n=answers.name.trim().split(" ")[0];setUserName(n.charAt(0).toUpperCase()+n.slice(1));}
-            if(answers.faith){const fi=answers.faith.includes("None")?0:answers.faith.includes("Minimal")?1:answers.faith.includes("Balanced")?2:3;setFaithLevel(fi);}
+            if(answers.faith){
+              const f=answers.faith;
+              let fi=2;
+              if(f.includes("Faith-forward")||f.includes("Close.")&&f.includes("everything"))fi=3;
+              else if(f.includes("Balanced")||f.includes("middle")&&f.includes("wrestling"))fi=2;
+              else if(f.includes("Minimal")||f.includes("Distant.")||f.includes("Not sure what"))fi=1;
+              else if(f.includes("None —")||f.includes("not religious"))fi=0;
+              setFaithLevel(fi);
+            }
             if(answers.gender==="Man") setThemeId("masculine");
             else if(answers.gender==="Woman") setThemeId("warm");
             else setThemeId("warm");
