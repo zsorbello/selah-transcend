@@ -1333,13 +1333,14 @@ function LandingPage({ onEnter, C, font }) {
           <h1 style={{ color:"#2C2C2A", fontSize:"clamp(28px,7vw,48px)",
             fontWeight:"normal", margin:"0 0 20px", lineHeight:"1.3",
             letterSpacing:"-0.01em" }}>
-            God didn&apos;t call you to carry <br/>
-            <span style={{ color:"#8FA38A" }}>this alone.</span>
+            The noise in your head has gone on long enough.
           </h1>
 
           <p style={{ color:"#6B6B66", fontSize:"clamp(14px,3vw,17px)", fontStyle:"italic",
             lineHeight:"2", margin:"0 0 40px", maxWidth:"460px", marginLeft:"auto", marginRight:"auto" }}>
-            Selah is your space to be honest, reflect deeply, and move forward — faith-rooted, psychologically grounded, built for the strong and the struggling.
+            Selah is your pause — where faith cuts through the chaos and peace actually finds you.
+            <br /><br />
+            Still your mind. Strengthen your soul.
           </p>
 
           <button onClick={onEnter} style={{
@@ -1351,7 +1352,7 @@ function LandingPage({ onEnter, C, font }) {
             transition:"all 0.3s ease" }}
             onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 8px 30px rgba(143,163,138,0.45)";}}
             onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 4px 20px rgba(143,163,138,0.35)";}}>
-            Enter Selah
+            ENTER SELAH
           </button>
 
           <p style={{ color:"#9E9E98", fontSize:"12px", fontStyle:"italic", margin:"16px 0 0" }}>
