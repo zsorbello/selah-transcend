@@ -2545,6 +2545,8 @@ function FirstTimeWelcome({ C, font, userName, onboardingAnswers, onReflect, onE
 function OnboardingScreen({ onDone, C, font }) {
   const [step,setStep]=useState(0);
   const [answers,setAnswers]=useState({});
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
   const [pauseTimeCustom, setPauseTimeCustom]=useState(false);
   const allQuestions=[
     { id:"name", q:"First — what should Selah call you?", type:"word",
@@ -2635,9 +2637,12 @@ function OnboardingScreen({ onDone, C, font }) {
 
   const next=()=>{
     // Block under 13
-    if(q.id==="age" && answers.age==="Under 13") return;
+    if(q.id==="age" && answersRef.current.age==="Under 13") return;
     if(step<questions.length-1)setStep(s=>s+1);
-    else onDone({...answers, isMinor});
+    else {
+      const latest = answersRef.current;
+      onDone({ ...latest, isMinor: latest.age === "13-15" });
+    }
   };
 
   // Under 13 block screen
@@ -2910,7 +2915,7 @@ function OnboardingScreen({ onDone, C, font }) {
             )}
           </div>
         ) : (
-          <button onClick={next} disabled={!canNext} style={{
+          <button type="button" onClick={next} disabled={!canNext} style={{
             width:"100%",background:canNext?C.accent:C.bgCard,
             border:"none",borderRadius:"3px",color:canNext?"#fff":C.textMuted,
             fontSize:"10px",letterSpacing:"4px",textTransform:"uppercase",
@@ -17486,9 +17491,12 @@ useEffect(() => {
       if(appScreen==="onboarding") return (
         <OnboardingScreen C={C} font={font}
           onDone={(answers)=>{
-            if(answers.name){const n=answers.name.trim().split(" ")[0];setUserName(n.charAt(0).toUpperCase()+n.slice(1));}
-            if(answers.faith){
-              const f=answers.faith;
+            if(answers.name!=null&&String(answers.name).trim()!==""){
+              const n=String(answers.name).trim().split(" ")[0];
+              if(n)setUserName(n.charAt(0).toUpperCase()+n.slice(1));
+            }
+            if(answers.faith!=null&&String(answers.faith).trim()!==""){
+              const f=String(answers.faith);
               let fi=2;
               if(f.includes("Faith-forward")||f.includes("Close.")&&f.includes("everything"))fi=3;
               else if(f.includes("Balanced")||f.includes("middle")&&f.includes("wrestling"))fi=2;
