@@ -1886,8 +1886,34 @@ function EmailGateScreen({ onVerified, C, font }) {
   const [error, setError] = useState("");
   const [softMsg, setSoftMsg] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(30);
+  const [resendMessage, setResendMessage] = useState("");
 
   useEffect(() => { setTimeout(() => setVisible(true), 80); }, []);
+
+  useEffect(() => {
+    if (step !== "code") return;
+    setResendCooldown(30);
+    setResendMessage("");
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== "code" || resendCooldown <= 0) return;
+    const t = setInterval(() => {
+      setResendCooldown((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [step, resendCooldown]);
+
+  const requestCode = async (emailToSend) => {
+    const r = await fetch("/api/auth", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ action:"send-code", email: emailToSend })
+    });
+    const d = await r.json();
+    return !!(d.success || r.ok);
+  };
 
   const sendCode = async () => {
     const trimmed = email.trim().toLowerCase();
@@ -1896,13 +1922,28 @@ function EmailGateScreen({ onVerified, C, font }) {
     }
     setLoading(true); setError("");
     try {
-      const r = await fetch("/api/auth", { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ action:"send-code", email: trimmed }) });
-      const d = await r.json();
-      if (d.success || r.ok) { setStep("code"); }
+      const ok = await requestCode(trimmed);
+      if (ok) { setStep("code"); }
       else { setError("Couldn't send code. Try again."); }
     } catch { setError("Network error. Please try again."); }
     setLoading(false);
+  };
+
+  const resendCode = async () => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) return;
+    setResendMessage("");
+    try {
+      const ok = await requestCode(trimmed);
+      if (ok) {
+        setResendMessage("A new code was sent to your email.");
+        setResendCooldown(30);
+      } else {
+        setResendMessage("Something went wrong. Try again in a moment.");
+      }
+    } catch {
+      setResendMessage("Something went wrong. Try again in a moment.");
+    }
   };
 
   const verifyCode = async () => {
@@ -2026,6 +2067,23 @@ function EmailGateScreen({ onVerified, C, font }) {
                   transition:"background 0.2s" }}>
                 {loading ? "Verifying…" : "Begin My Trial"}
               </button>
+              <p style={{ color:textMuted, fontSize:"11px", fontStyle:"italic", margin:"10px 0 0", textAlign:"center" }}>
+                Resend available in {resendCooldown}s
+              </p>
+              {resendCooldown <= 0 && (
+                <button type="button" onClick={resendCode}
+                  style={{ background:"none", border:"none", color:textMuted, fontSize:"11px",
+                    fontStyle:"italic", padding:0, margin:"6px auto 0", cursor:"pointer",
+                    textDecoration:"underline", display:"block", fontFamily:"inherit" }}>
+                  Resend code
+                </button>
+              )}
+              {resendMessage && (
+                <p style={{ color:resendMessage.startsWith("A new code") ? textMuted : "#C4726A",
+                  fontSize:"11px", fontStyle:"italic", margin:"6px 0 0", textAlign:"center" }}>
+                  {resendMessage}
+                </p>
+              )}
               <button onClick={()=>{ setStep("email"); setCode(""); setError(""); }}
                 style={{ width:"100%", marginTop:"10px", padding:"10px",
                   background:"transparent", color:textMuted, border:"none",
@@ -13424,6 +13482,26 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, darkMode, setDark
           </p>
         </div>
 
+        {/* Appearance (always visible) */}
+        <div style={{ marginBottom:"18px" }}>
+          <Label text="Appearance" color={C.sage} font={font}/>
+          <div style={{ background:C.bgSecondary,borderRadius:"10px",
+            overflow:"hidden",border:`1px solid ${C.border}` }}>
+            <div style={{ display:"flex",alignItems:"center",gap:"14px",
+              padding:"16px 18px" }}>
+              <span style={{ fontSize:"18px",flexShrink:0 }}>◐</span>
+              <div style={{ flex:1 }}>
+                <p style={{ color:C.textPrimary,fontSize:"13px",fontFamily:font,
+                  margin:"0 0 2px" }}>Dark Mode</p>
+                <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",margin:0 }}>
+                  Switch Selah to a black & white dark appearance.
+                </p>
+              </div>
+              <Toggle v={darkMode} onChange={setDarkMode}/>
+            </div>
+          </div>
+        </div>
+
         {/* Tabs */}
         <div style={{ display:"flex",gap:"0",background:C.bgSecondary,
           borderRadius:"8px",padding:"4px",marginBottom:"24px",
@@ -13655,23 +13733,6 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, darkMode, setDark
         {/* ── DISPLAY TAB ── */}
         {tab==="display"&&(
           <div>
-            <Label text="Appearance" color={C.sage} font={font}/>
-            <div style={{ background:C.bgSecondary,borderRadius:"10px",
-              overflow:"hidden",border:`1px solid ${C.border}`,marginBottom:"20px" }}>
-              <div style={{ display:"flex",alignItems:"center",gap:"14px",
-                padding:"16px 18px" }}>
-                <span style={{ fontSize:"18px",flexShrink:0 }}>◐</span>
-                <div style={{ flex:1 }}>
-                  <p style={{ color:C.textPrimary,fontSize:"13px",fontFamily:font,
-                    margin:"0 0 2px" }}>Dark Mode</p>
-                  <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",margin:0 }}>
-                    Switch Selah to a black & white dark appearance.
-                  </p>
-                </div>
-                <Toggle v={darkMode} onChange={setDarkMode}/>
-              </div>
-            </div>
-
             <Label text="Font Style" color={C.amber} font={font}/>
             {(TIER_LEVELS[tier]||0) < TIER_LEVELS.foundation && !(trialDaysLeft > 0) ? (
               <div style={{ background:`${C.amber}08`, border:`1px solid ${C.amber}33`,
