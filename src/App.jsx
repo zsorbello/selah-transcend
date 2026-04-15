@@ -6480,6 +6480,18 @@ function GuidedTour({ C, font, onDismiss, onGoToSettings, setScreen }) {
       ),
     },
     {
+      icon: "🌙",
+      title: "Midnight Room",
+      body: "Opens automatically between 11pm and 4am. A quieter, softer version of Selah for when the night gets heavy.",
+      preview: null,
+    },
+    {
+      icon: "🖤",
+      title: "Lament Mode",
+      body: "A space to be completely honest. No silver linings. No fixing. Just you, your words, and God.",
+      preview: null,
+    },
+    {
       icon: "🕯️",
       title: "Prayer Wall — hold each other.",
       body: "An anonymous community prayer board. Post a one-line prayer request. Tap the flame on someone else's to say you're praying for them. No names. No comments. Just people holding each other up.",
@@ -6503,6 +6515,12 @@ function GuidedTour({ C, font, onDismiss, onGoToSettings, setScreen }) {
         </div>
       ),
       action: { label:"Visit The Wall", fn:()=>{ onDismiss(); setScreen("prayerwallselector"); } },
+    },
+    {
+      icon: "🧱",
+      title: "The Wall",
+      body: "Post one anonymous sentence about what you're carrying. Or read what others are carrying. You're not alone.",
+      preview: null,
     },
     {
       icon: "💌",
@@ -16104,6 +16122,9 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
     { feature:"Gratitude & Letters to God",   free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Biblical Reflections",         free:"—",       foundation:"Full — 75+",growth:"Full — 75+", deep:"Full — 75+" },
     { feature:"Prayer Wall",                  free:"View",    foundation:"Post & hold",growth:"Post & hold",deep:"Post & hold" },
+    { feature:"Midnight Room",                free:"✗",       foundation:"✓",         growth:"✓",          deep:"✓" },
+    { feature:"Lament Mode",                  free:"✗",       foundation:"✓",         growth:"✓",          deep:"✓" },
+    { feature:"The Wall",                     free:"✗",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Selah's Letter",               free:"✗",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Daily Anchor",                 free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"The Bench (saved insights)",   free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
