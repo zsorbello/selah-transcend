@@ -1289,7 +1289,7 @@ function LandingPage({ onEnter, C, font }) {
 
   const FEATURES = [
     { icon: "◈", title: "Guided Reflection", desc: "Conversations that go deeper than surface-level. Selah listens, asks the right questions, and helps you think clearly." },
-    { icon: "🫁", title: "Breathing & Grounding", desc: "Before you think — breathe. Guided techniques used by therapists and special forces alike." },
+    { icon: "🫁", title: "Breathe & Listen", desc: "Before you think — breathe. Guided techniques used by therapists and special forces alike." },
     { icon: "✍️", title: "Private Notebook", desc: "Write whatever you need to. No one reads it but you. Your thoughts, unfiltered." },
     { icon: "📊", title: "Growth Tracking", desc: "Watch yourself change over time. Mood patterns, streaks, milestones — proof that you're becoming." },
     { icon: "✦", title: "Faith on Your Terms", desc: "From fully secular to scripture-led. You control how faith shows up — or doesn't." },
@@ -1326,19 +1326,21 @@ function LandingPage({ onEnter, C, font }) {
             gap:"10px", margin:"20px 0" }}>
             <div style={{ width:"40px", height:"1px", background:"#8FA38A", opacity:0.4 }}/>
             <span style={{ color:"#9E9E98", fontSize:"10px", letterSpacing:"5px",
-              textTransform:"uppercase", fontStyle:"italic" }}>A SPACE TO PAUSE WITH GOD</span>
+              textTransform:"uppercase", fontStyle:"italic" }}>PAUSE WITH GOD</span>
             <div style={{ width:"40px", height:"1px", background:"#8FA38A", opacity:0.4 }}/>
           </div>
 
           <h1 style={{ color:"#2C2C2A", fontSize:"clamp(28px,7vw,48px)",
             fontWeight:"normal", margin:"0 0 20px", lineHeight:"1.3",
             letterSpacing:"-0.01em" }}>
-            The noise in your head has gone on long enough.
+            Where God meets you in your hardest moments.
           </h1>
 
           <p style={{ color:"#6B6B66", fontSize:"clamp(14px,3vw,17px)", fontStyle:"italic",
             lineHeight:"2", margin:"0 0 40px", maxWidth:"460px", marginLeft:"auto", marginRight:"auto" }}>
-            Selah is your pause — where faith cuts through the chaos and peace actually finds you.
+            Silence the noise in your head.
+            <br /><br />
+            Selah is your pause — where faith cuts through the chaos and peace finds you.
             <br /><br />
             Still your mind. Strengthen your soul.
           </p>
@@ -2599,7 +2601,7 @@ function OnboardingScreen({ onDone, C, font }) {
     } else { setAnswers(a=>({...a,[q.id]:val})); }
   };
 
-  const consentMessage = `Hi — ${answers.name||"your child"} wants to use Selah, a faith-rooted mental wellness app, and needs your permission.\n\nSelah is NOT social media. No ads. No strangers. No data collection. No algorithms. It's a private space for journaling, breathing exercises, and guided reflection.\n\nEverything stays on their device. Crisis resources (988 Lifeline, Crisis Text Line) are always one tap away. All content is age-filtered and safe.\n\nWe built Selah because too many young people are carrying weight they don't know how to process — and the apps they're already using are making it worse. Your child is choosing to do the work. That takes courage.\n\nOne tap to approve:\nhttps://selah-transcend.vercel.app/api/consent?code=CODE&action=approve`;
+  const consentMessage = `Hi — ${answers.name||"your child"} wants to use Selah, a faith-rooted mental wellness app, and needs your permission.\n\nSelah is NOT social media. No ads. No strangers. No data collection. No algorithms. It's a private space for journaling, Breathe & Listen, and guided reflection.\n\nEverything stays on their device. Crisis resources (988 Lifeline, Crisis Text Line) are always one tap away. All content is age-filtered and safe.\n\nWe built Selah because too many young people are carrying weight they don't know how to process — and the apps they're already using are making it worse. Your child is choosing to do the work. That takes courage.\n\nOne tap to approve:\nhttps://selah-transcend.vercel.app/api/consent?code=CODE&action=approve`;
 
   const sendParentConsent = async () => {
     setConsentSending(true);
@@ -2977,9 +2979,10 @@ function LateNightModal({ onEnter, onDismiss, C, font }) {
 }
 
 // ═══════════════════════════════════════════════════════
-// BREATHING EXERCISE
+// BREATHE & LISTEN (breathing + premium listening practices)
 // ═══════════════════════════════════════════════════════
-function BreathingExercise({ C, font, onClose, onSessionComplete }) {
+function BreathingExercise({ C, font, onClose, onSessionComplete, showPremiumPractices }) {
+  const [flow, setFlow] = useState("menu"); // menu | classic | breathPrayer | breathPrayerDone | examen | ruminatio | centering
   const [phase, setPhase] = useState("ready"); // ready | inhale | hold | exhale | holdOut | done
   const [cycle, setCycle] = useState(0);
   const [totalCycles] = useState(4);
@@ -2987,6 +2990,28 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
   const [technique, setTechnique] = useState(null);
   const [sessionActive, setSessionActive] = useState(false);
   const timerRef = useRef(null);
+
+  const [bpStage, setBpStage] = useState("idle"); // idle | running | done
+  const [bpPairIdx, setBpPairIdx] = useState(0);
+  const [bpCycleIdx, setBpCycleIdx] = useState(0);
+  const [bpPhase, setBpPhase] = useState("inhale");
+  const [bpLine, setBpLine] = useState("");
+  const [bpSecondsLeft, setBpSecondsLeft] = useState(4);
+  const bpCancelRef = useRef(false);
+  const bpLoopActiveRef = useRef(false);
+
+  const [exStep, setExStep] = useState(0);
+
+  const [rumiStage, setRumiStage] = useState("pick");
+  const [rumiWord, setRumiWord] = useState("");
+  const [rumiCustom, setRumiCustom] = useState("");
+
+  const [cenStage, setCenStage] = useState("pick");
+  const [cenWord, setCenWord] = useState("");
+  const [cenCustom, setCenCustom] = useState("");
+  const [cenSecLeft, setCenSecLeft] = useState(600);
+  const [cenReminderOn, setCenReminderOn] = useState(false);
+  const cenTimerRef = useRef(null);
 
   const TECHNIQUES = [
     { id:"box", name:"Box Breathing", desc:"Equal parts. Used by Navy SEALs to stay calm under pressure.",
@@ -2996,6 +3021,44 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
     { id:"ground", name:"Grounding Breath", desc:"Simple and slow. Good when your mind won't stop.",
       icon:"🌿", steps:[{p:"inhale",t:5},{p:"exhale",t:5}] },
   ];
+
+  const PREMIUM_TECHNIQUES = [
+    { id:"breathPrayer", name:"Breath Prayer",
+      desc:"A 1,700-year-old Christian practice. Pair your inhale with a truth. Pair your exhale with a release. Let your breath become prayer.",
+      icon:"✦" },
+    { id:"examen", name:"The Daily Examen",
+      desc:"St. Ignatius of Loyola, 1500s. A 5-step end-of-day review with God. Not journaling. Not performance. Just honest conversation.",
+      icon:"🕯️" },
+    { id:"ruminatio", name:"Ruminatio",
+      desc:"The Desert Fathers, 3rd century. One word. Repeated slowly. All day. Until it lives inside you instead of your anxiety.",
+      icon:"◎" },
+    { id:"centering", name:"Centering Prayer",
+      desc:"4th century Desert Fathers. Choose one sacred word. Sit in silence. Every time your mind wanders — return to the word. This is consent to God's presence.",
+      icon:"◇" },
+  ];
+
+  const BREATH_PRAYER_PAIRS = [
+    { inhale: "You are with me", exhale: "I release this fear" },
+    { inhale: "I am held", exhale: "I let go" },
+  ];
+
+  const EXAMEN_STEPS = [
+    "Be still. Take three slow breaths. You are in God's presence right now.",
+    "Where did you feel most alive today? What brought you even a small moment of peace?",
+    "Where did you feel most drained or distant today? Don't judge it — just notice it.",
+    "Is there anything from today you need to release — a mistake, a resentment, a worry? Name it and let it go.",
+    "What do you want to carry into tomorrow? One word or one intention is enough.",
+  ];
+
+  const RUMI_PRESETS = ["Peace", "Still", "Held", "Enough", "Free", "Forgiven", "Brave"];
+  const CEN_PRESETS = ["Jesus", "Peace", "Abba", "Still", "Love", "Mercy", "Open"];
+
+  const bumpBreatheCount = () => {
+    try {
+      const c = parseInt(localStorage.getItem("selah_breathe_count") || "0", 10);
+      localStorage.setItem("selah_breathe_count", String(c + 1));
+    } catch (e) {}
+  };
 
   const PHASE_TEXT = {
     inhale: "Breathe in...",
@@ -3012,6 +3075,7 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
   };
 
   const startSession = (tech) => {
+    setFlow("classic");
     setTechnique(tech);
     setSessionActive(true);
     setCycle(0);
@@ -3021,7 +3085,7 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
   const runCycle = (tech, cycleNum) => {
     if (cycleNum >= totalCycles) {
       setPhase("done");
-      try { const c=parseInt(localStorage.getItem("selah_breathe_count")||"0"); localStorage.setItem("selah_breathe_count",String(c+1)); } catch(e){}
+      bumpBreatheCount();
       return;
     }
     setCycle(cycleNum);
@@ -3050,19 +3114,118 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
   };
 
   useEffect(() => {
-    return () => clearInterval(timerRef.current);
+    return () => {
+      clearInterval(timerRef.current);
+      clearInterval(cenTimerRef.current);
+    };
   }, []);
 
-  const reset = () => {
+  const startBreathPrayer = () => {
+    if (bpLoopActiveRef.current) return;
+    bpLoopActiveRef.current = true;
+    bpCancelRef.current = false;
+    setFlow("breathPrayer");
+    setBpStage("running");
+    (async () => {
+      try {
+        for (let p = 0; p < BREATH_PRAYER_PAIRS.length; p++) {
+          for (let c = 0; c < 5; c++) {
+            if (bpCancelRef.current) return;
+            setBpPairIdx(p);
+            setBpCycleIdx(c);
+            setBpPhase("inhale");
+            setBpLine(BREATH_PRAYER_PAIRS[p].inhale);
+            for (let t = 4; t > 0; t--) {
+              if (bpCancelRef.current) return;
+              setBpSecondsLeft(t);
+              await new Promise(r => setTimeout(r, 1000));
+            }
+            if (bpCancelRef.current) return;
+            setBpPhase("exhale");
+            setBpLine(BREATH_PRAYER_PAIRS[p].exhale);
+            for (let t = 4; t > 0; t--) {
+              if (bpCancelRef.current) return;
+              setBpSecondsLeft(t);
+              await new Promise(r => setTimeout(r, 1000));
+            }
+          }
+        }
+        if (bpCancelRef.current) return;
+        bumpBreatheCount();
+        setBpStage("done");
+        setFlow("breathPrayerDone");
+      } finally {
+        bpLoopActiveRef.current = false;
+      }
+    })();
+  };
+
+  useEffect(() => {
+    if (flow !== "centering" || cenStage !== "sit") return;
+    clearInterval(cenTimerRef.current);
+    cenTimerRef.current = setInterval(() => {
+      setCenSecLeft(s => {
+        const next = s - 1;
+        if ([480, 360, 240, 120].includes(next)) setCenReminderOn(true);
+        if (next <= 0) {
+          clearInterval(cenTimerRef.current);
+          bumpBreatheCount();
+          setCenStage("done");
+          return 0;
+        }
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(cenTimerRef.current);
+  }, [flow, cenStage]);
+
+  useEffect(() => {
+    if (!cenReminderOn) return;
+    const t = setTimeout(() => setCenReminderOn(false), 8000);
+    return () => clearTimeout(t);
+  }, [cenReminderOn]);
+
+  const goMenu = () => {
     clearInterval(timerRef.current);
+    clearInterval(cenTimerRef.current);
+    bpCancelRef.current = true;
+    bpLoopActiveRef.current = false;
     setPhase("ready");
     setSessionActive(false);
     setTechnique(null);
     setCycle(0);
+    setFlow("menu");
+    setBpStage("idle");
+    setBpPairIdx(0);
+    setBpCycleIdx(0);
+    setBpPhase("inhale");
+    setBpLine("");
+    setExStep(0);
+    setRumiStage("pick");
+    setRumiWord("");
+    setRumiCustom("");
+    setCenStage("pick");
+    setCenWord("");
+    setCenCustom("");
+    setCenSecLeft(600);
+    setCenReminderOn(false);
+  };
+
+  const reset = () => {
+    goMenu();
   };
 
   const circleColor = phase === "inhale" ? C.sage : phase === "hold" ? C.amber :
     phase === "exhale" ? C.terra : phase === "holdOut" ? C.sageLight : C.sage;
+
+  const bpCircleColor = bpPhase === "inhale" ? C.sage : C.terra;
+  const bpScale = bpPhase === "inhale" ? 1.35 : 1;
+
+  const showMenu = flow === "menu";
+  const showClassicRun = flow === "classic" && sessionActive && phase !== "done";
+  const showClassicDone = flow === "classic" && phase === "done";
+  const showBpRun = flow === "breathPrayer" && bpStage === "running";
+  const showBpDone = flow === "breathPrayerDone";
 
   return (
     <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
@@ -3070,41 +3233,39 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
       justifyContent:"center", padding:"40px 24px", textAlign:"center",
       position:"relative", overflow:"hidden" }}>
 
-      {/* Ambient backgrounds */}
       <div style={{ position:"absolute", top:"-100px", left:"-80px", width:"400px", height:"400px",
         background:`radial-gradient(circle,${C.sageLight}18 0%,transparent 70%)`, pointerEvents:"none" }}/>
       <div style={{ position:"absolute", bottom:"-80px", right:"-60px", width:"360px", height:"360px",
         background:`radial-gradient(circle,${C.amberLight}12 0%,transparent 70%)`, pointerEvents:"none" }}/>
 
-      {/* Back button */}
-      <button onClick={onClose} style={{ position:"absolute", top:"20px", left:"20px",
+      <button type="button" onClick={() => (flow === "menu" ? onClose() : goMenu())} style={{ position:"absolute", top:"20px", left:"20px",
         background:"none", border:"none", cursor:"pointer",
         color:C.textMuted, fontSize:"18px", padding:"8px" }}>←</button>
 
       <div style={{ maxWidth:"400px", width:"100%" }}>
 
-        {!sessionActive && phase !== "done" && (
+        {showMenu && (
           <>
             <WaveLogo size={32} color={C.sage}/>
-            <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"4px",
-              textTransform:"uppercase", fontStyle:"italic", margin:"16px 0 8px" }}>Breathe</p>
+            <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"3px",
+              textTransform:"uppercase", fontStyle:"italic", margin:"16px 0 8px" }}>Breathe & Listen</p>
             <h1 style={{ color:C.textPrimary, fontSize:"clamp(20px,5vw,26px)",
               fontWeight:"normal", margin:"0 0 8px", lineHeight:"1.4" }}>
               Before you think — breathe.
             </h1>
             <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic",
               lineHeight:"1.9", margin:"0 0 32px" }}>
-              Choose a technique. Selah will guide you through {totalCycles} cycles.
+              Choose a technique. Selah will guide you through {totalCycles} cycles for the exercises below{showPremiumPractices ? ", or open a listening practice if you have Foundation+." : "."}
             </p>
 
             <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
               {TECHNIQUES.map(tech => (
-                <button key={tech.id} onClick={() => startSession(tech)} style={{
+                <button key={tech.id} type="button" onClick={() => startSession(tech)} style={{
                   background:C.bgSecondary, border:`1.5px solid ${C.border}`,
                   borderRadius:"10px", padding:"16px 18px", cursor:"pointer",
                   textAlign:"left", transition:"all 0.2s ease" }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = C.sage + "66"}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = C.sage + "66"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}>
                   <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"6px" }}>
                     <span style={{ fontSize:"20px" }}>{tech.icon}</span>
                     <span style={{ color:C.textPrimary, fontSize:"14px", fontWeight:"bold",
@@ -3112,7 +3273,7 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
                   </div>
                   <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
                     lineHeight:"1.7", margin:0, paddingLeft:"32px" }}>{tech.desc}</p>
-                  <div style={{ display:"flex", gap:"6px", paddingLeft:"32px", marginTop:"8px" }}>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:"6px", paddingLeft:"32px", marginTop:"8px" }}>
                     {tech.steps.map((s, i) => (
                       <span key={i} style={{ background:`${C.sage}15`, color:C.sage,
                         fontSize:"8px", letterSpacing:"1.5px", textTransform:"uppercase",
@@ -3124,10 +3285,49 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
                 </button>
               ))}
             </div>
+
+            {showPremiumPractices && (
+              <div style={{ marginTop:"28px" }}>
+                {PREMIUM_TECHNIQUES.map(pt => (
+                  <button key={pt.id} type="button" onClick={() => {
+                    if (pt.id === "breathPrayer") {
+                      startBreathPrayer();
+                    } else if (pt.id === "examen") {
+                      setExStep(0);
+                      setFlow("examen");
+                    } else if (pt.id === "ruminatio") {
+                      setRumiStage("pick");
+                      setRumiWord("");
+                      setRumiCustom("");
+                      setFlow("ruminatio");
+                    } else if (pt.id === "centering") {
+                      setCenStage("pick");
+                      setCenWord("");
+                      setCenCustom("");
+                      setCenSecLeft(600);
+                      setFlow("centering");
+                    }
+                  }} style={{
+                    width:"100%", marginBottom:"10px", background:C.bgSecondary,
+                    border:`1.5px solid ${C.amber}33`, borderRadius:"10px", padding:"16px 18px",
+                    cursor:"pointer", textAlign:"left", transition:"all 0.2s ease" }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = C.amber + "88"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = C.amber + "33"; }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"6px" }}>
+                      <span style={{ fontSize:"20px" }}>{pt.icon}</span>
+                      <span style={{ color:C.textPrimary, fontSize:"14px", fontWeight:"bold",
+                        fontFamily:font }}>{pt.name}</span>
+                    </div>
+                    <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
+                      lineHeight:"1.7", margin:0, paddingLeft:"32px" }}>{pt.desc}</p>
+                  </button>
+                ))}
+              </div>
+            )}
           </>
         )}
 
-        {sessionActive && phase !== "done" && (
+        {showClassicRun && (
           <>
             <p style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"3px",
               textTransform:"uppercase", fontStyle:"italic", margin:"0 0 8px" }}>
@@ -3137,10 +3337,8 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
               Cycle {cycle + 1} of {totalCycles}
             </p>
 
-            {/* Animated breathing circle */}
             <div style={{ position:"relative", width:"200px", height:"200px",
               margin:"0 auto 40px", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              {/* Outer pulse rings */}
               {[0,1,2].map(i => (
                 <div key={i} style={{ position:"absolute", width:"100%", height:"100%",
                   borderRadius:"50%", border:`1.5px solid ${circleColor}`,
@@ -3148,7 +3346,6 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
                   transform:`scale(${(PHASE_SCALE[phase] || 1) + i * 0.12})`,
                   transition:`transform ${phase === "inhale" ? "4s" : phase === "exhale" ? "5s" : "0.3s"} ease-in-out, border-color 0.5s ease` }}/>
               ))}
-              {/* Main circle */}
               <div style={{ width:"160px", height:"160px", borderRadius:"50%",
                 background:`radial-gradient(circle, ${circleColor}30 0%, ${circleColor}08 70%)`,
                 border:`2px solid ${circleColor}55`,
@@ -3172,14 +3369,14 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
                phase === "holdOut" ? "Empty. Still. At peace." : ""}
             </p>
 
-            <button onClick={reset} style={{ background:"none", border:`1px solid ${C.border}`,
+            <button type="button" onClick={reset} style={{ background:"none", border:`1px solid ${C.border}`,
               borderRadius:"3px", color:C.textMuted, fontSize:"9px", letterSpacing:"3px",
               textTransform:"uppercase", padding:"10px 24px", cursor:"pointer",
               fontFamily:font }}>End Early</button>
           </>
         )}
 
-        {phase === "done" && (
+        {showClassicDone && (
           <>
             <div style={{ marginBottom:"24px" }}>
               <WaveLogo size={36} color={C.sage}/>
@@ -3194,14 +3391,14 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
               lineHeight:"1.9", margin:"0 0 32px" }}>
               {totalCycles} cycles of {technique?.name}. Your nervous system thanks you.
             </p>
-            <div style={{ display:"flex", gap:"10px", justifyContent:"center" }}>
-              <button onClick={reset} style={{ background:C.bgSecondary,
+            <div style={{ display:"flex", gap:"10px", justifyContent:"center", flexWrap:"wrap" }}>
+              <button type="button" onClick={reset} style={{ background:C.bgSecondary,
                 border:`1px solid ${C.border}`, borderRadius:"3px", color:C.textSoft,
                 fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase",
                 padding:"14px 24px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>
                 Breathe Again
               </button>
-              <button onClick={()=>{ if (onSessionComplete) onSessionComplete(); onClose(); }} style={{ background:C.sage, border:"none",
+              <button type="button" onClick={() => { if (onSessionComplete) onSessionComplete(); onClose(); }} style={{ background:C.sage, border:"none",
                 borderRadius:"3px", color:"#fff", fontSize:"10px", letterSpacing:"3px",
                 textTransform:"uppercase", padding:"14px 28px", cursor:"pointer",
                 fontFamily:font, fontStyle:"italic" }}>
@@ -3211,13 +3408,293 @@ function BreathingExercise({ C, font, onClose, onSessionComplete }) {
             <div style={{ marginTop:"28px", borderTop:`1px solid ${C.border}`, paddingTop:"18px" }}>
               <p style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic",
                 lineHeight:"1.9", margin:0 }}>
-                "Be still and know that I am God."
+                &quot;Be still and know that I am God.&quot;
               </p>
               <p style={{ color:C.sageLight, fontSize:"9px", letterSpacing:"2px",
                 textTransform:"uppercase", margin:"4px 0 0" }}>Psalm 46:10</p>
             </div>
           </>
         )}
+
+        {showBpRun && (
+          <>
+            <p style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"3px",
+              textTransform:"uppercase", fontStyle:"italic", margin:"0 0 8px" }}>Breath Prayer</p>
+            <p style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic", margin:"0 0 16px" }}>
+              Pair {bpPairIdx + 1} of 2 · Cycle {bpCycleIdx + 1} of 5 · {bpPhase === "inhale" ? "Inhale 4s" : "Exhale 4s"}
+            </p>
+            <div style={{ position:"relative", width:"200px", height:"200px",
+              margin:"0 auto 28px", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              {[0,1,2].map(i => (
+                <div key={i} style={{ position:"absolute", width:"100%", height:"100%",
+                  borderRadius:"50%", border:`1.5px solid ${bpCircleColor}`,
+                  opacity: 0.12 - i * 0.03,
+                  transform:`scale(${bpScale + i * 0.1})`,
+                  transition:"transform 4s ease-in-out, border-color 0.5s ease" }}/>
+              ))}
+              <div style={{ width:"160px", height:"160px", borderRadius:"50%",
+                background:`radial-gradient(circle, ${bpCircleColor}28 0%, ${bpCircleColor}08 70%)`,
+                border:`2px solid ${bpCircleColor}55`,
+                transform:`scale(${bpScale})`,
+                transition:"transform 4s ease-in-out",
+                display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
+                <span style={{ color:bpCircleColor, fontSize:"36px", fontWeight:"bold", fontFamily:font }}>{bpSecondsLeft}</span>
+              </div>
+            </div>
+            <p style={{ color:C.textPrimary, fontSize:"clamp(17px,4.5vw,22px)", fontStyle:"italic",
+              lineHeight:"1.45", margin:"0 0 24px", minHeight:"3.2em" }}>{bpLine}</p>
+            <button type="button" onClick={() => { bpCancelRef.current = true; goMenu(); }} style={{ background:"none", border:`1px solid ${C.border}`,
+              borderRadius:"3px", color:C.textMuted, fontSize:"9px", letterSpacing:"3px",
+              textTransform:"uppercase", padding:"10px 24px", cursor:"pointer", fontFamily:font }}>End Early</button>
+          </>
+        )}
+
+        {showBpDone && (
+          <>
+            <WaveLogo size={36} color={C.sage}/>
+            <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"4px",
+              textTransform:"uppercase", fontStyle:"italic", margin:"20px 0 12px" }}>Breath Prayer</p>
+            <p style={{ color:C.textPrimary, fontSize:"clamp(17px,4.5vw,22px)", fontStyle:"italic",
+              lineHeight:"1.5", margin:"0 0 28px" }}>
+              You just prayed with your breath. That&apos;s what the Desert Fathers did for centuries.
+            </p>
+            <div style={{ display:"flex", gap:"10px", justifyContent:"center", flexWrap:"wrap" }}>
+              <button type="button" onClick={goMenu} style={{ background:C.bgSecondary,
+                border:`1px solid ${C.border}`, borderRadius:"3px", color:C.textSoft,
+                fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase",
+                padding:"14px 24px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>Back</button>
+              <button type="button" onClick={() => { if (onSessionComplete) onSessionComplete(); onClose(); }} style={{ background:C.sage, border:"none",
+                borderRadius:"3px", color:"#fff", fontSize:"10px", letterSpacing:"3px",
+                textTransform:"uppercase", padding:"14px 28px", cursor:"pointer",
+                fontFamily:font, fontStyle:"italic" }}>Continue</button>
+            </div>
+          </>
+        )}
+
+        {flow === "examen" && (
+          <>
+            {exStep < 5 ? (
+              <>
+                <p style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"3px",
+                  textTransform:"uppercase", fontStyle:"italic", margin:"0 0 12px" }}>The Daily Examen</p>
+                <p style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic", margin:"0 0 20px" }}>
+                  Step {exStep + 1} of 5
+                </p>
+                <p style={{ color:C.textPrimary, fontSize:"clamp(16px,4vw,20px)", fontStyle:"italic",
+                  lineHeight:"1.55", margin:"0 0 32px", textAlign:"left" }}>{EXAMEN_STEPS[exStep]}</p>
+                <button type="button" onClick={() => {
+                  if (exStep < 4) setExStep(exStep + 1);
+                  else {
+                    bumpBreatheCount();
+                    setExStep(5);
+                  }
+                }} style={{ background:C.sage, border:"none", borderRadius:"3px", color:"#fff",
+                  fontSize:"11px", letterSpacing:"2px", textTransform:"uppercase",
+                  padding:"14px 32px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>Continue</button>
+              </>
+            ) : (
+              <>
+                <WaveLogo size={36} color={C.sage}/>
+                <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"4px",
+                  textTransform:"uppercase", fontStyle:"italic", margin:"20px 0 12px" }}>The Daily Examen</p>
+                <p style={{ color:C.textPrimary, fontSize:"clamp(17px,4.5vw,22px)", fontStyle:"italic",
+                  lineHeight:"1.5", margin:"0 0 28px" }}>
+                  That&apos;s the Examen. Done daily, it changes how you see your life.
+                </p>
+                <div style={{ display:"flex", gap:"10px", justifyContent:"center", flexWrap:"wrap" }}>
+                  <button type="button" onClick={goMenu} style={{ background:C.bgSecondary,
+                    border:`1px solid ${C.border}`, borderRadius:"3px", color:C.textSoft,
+                    fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase",
+                    padding:"14px 24px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>Back</button>
+                  <button type="button" onClick={() => { if (onSessionComplete) onSessionComplete(); onClose(); }} style={{ background:C.sage, border:"none",
+                    borderRadius:"3px", color:"#fff", fontSize:"10px", letterSpacing:"3px",
+                    textTransform:"uppercase", padding:"14px 28px", cursor:"pointer",
+                    fontFamily:font, fontStyle:"italic" }}>Continue</button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {flow === "ruminatio" && (
+          <>
+            {rumiStage === "pick" && (
+              <>
+                <p style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"3px",
+                  textTransform:"uppercase", fontStyle:"italic", margin:"0 0 12px" }}>Ruminatio</p>
+                <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:"1.8",
+                  margin:"0 0 20px", textAlign:"left" }}>
+                  Choose one word, or type your own:
+                </p>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:"8px", marginBottom:"16px", justifyContent:"center" }}>
+                  {RUMI_PRESETS.map(w => (
+                    <button key={w} type="button" onClick={() => { setRumiWord(w); setRumiCustom(""); }}
+                      style={{
+                        background: rumiWord === w ? `${C.sage}33` : C.bgSecondary,
+                        border:`1.5px solid ${rumiWord === w ? C.sage : C.border}`,
+                        borderRadius:"20px", padding:"8px 14px", cursor:"pointer",
+                        color:C.textPrimary, fontFamily:font, fontSize:"12px", fontStyle:"italic" }}>
+                      {w}
+                    </button>
+                  ))}
+                </div>
+                <input value={rumiCustom} onChange={e => { setRumiCustom(e.target.value); setRumiWord(""); }}
+                  placeholder="Your word..."
+                  style={{
+                    width:"100%", boxSizing:"border-box", padding:"12px 14px", marginBottom:"16px",
+                    borderRadius:"8px", border:`1px solid ${C.border}`, background:C.bgSecondary,
+                    color:C.textPrimary, fontFamily:font, fontSize:"14px", fontStyle:"italic" }}
+                />
+                <button type="button" disabled={!rumiWord && !rumiCustom.trim()}
+                  onClick={() => {
+                    const w = rumiCustom.trim() || rumiWord;
+                    if (!w) return;
+                    setRumiWord(w);
+                    setRumiStage("practice");
+                  }}
+                  style={{
+                    background: (!rumiWord && !rumiCustom.trim()) ? C.textMuted : C.sage,
+                    border:"none", borderRadius:"3px", color:"#fff",
+                    fontSize:"11px", letterSpacing:"2px", textTransform:"uppercase",
+                    padding:"14px 28px", cursor:(!rumiWord && !rumiCustom.trim()) ? "not-allowed" : "pointer",
+                    fontFamily:font, fontStyle:"italic" }}>Begin</button>
+              </>
+            )}
+            {rumiStage === "practice" && (
+              <>
+                <p style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"3px",
+                  textTransform:"uppercase", fontStyle:"italic", margin:"0 0 24px" }}>Ruminatio</p>
+                <p style={{ color:C.sage, fontSize:"clamp(36px,12vw,56px)", fontWeight:"bold",
+                  fontFamily:font, margin:"0 0 28px", lineHeight:"1.1" }}>{rumiWord}</p>
+                <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic", lineHeight:"1.75",
+                  margin:"0 0 32px", textAlign:"left" }}>
+                  Say it slowly on your exhale. Again. Again. Carry this word with you today — when you&apos;re driving, working, waiting. Let it replace the noise.
+                </p>
+                <button type="button" onClick={() => { bumpBreatheCount(); setRumiStage("done"); }} style={{ background:C.sage, border:"none",
+                  borderRadius:"3px", color:"#fff", fontSize:"11px", letterSpacing:"2px",
+                  textTransform:"uppercase", padding:"14px 28px", cursor:"pointer",
+                  fontFamily:font, fontStyle:"italic", marginBottom:"16px" }}>Done</button>
+              </>
+            )}
+            {rumiStage === "done" && (
+              <>
+                <WaveLogo size={36} color={C.sage}/>
+                <p style={{ color:C.textPrimary, fontSize:"clamp(17px,4.5vw,22px)", fontStyle:"italic",
+                  lineHeight:"1.5", margin:"24px 0 28px" }}>
+                  This is how the Desert Fathers rewired their minds. One word at a time.
+                </p>
+                <div style={{ display:"flex", gap:"10px", justifyContent:"center", flexWrap:"wrap" }}>
+                  <button type="button" onClick={goMenu} style={{ background:C.bgSecondary,
+                    border:`1px solid ${C.border}`, borderRadius:"3px", color:C.textSoft,
+                    fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase",
+                    padding:"14px 24px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>Back</button>
+                  <button type="button" onClick={() => { if (onSessionComplete) onSessionComplete(); onClose(); }} style={{ background:C.sage, border:"none",
+                    borderRadius:"3px", color:"#fff", fontSize:"10px", letterSpacing:"3px",
+                    textTransform:"uppercase", padding:"14px 28px", cursor:"pointer",
+                    fontFamily:font, fontStyle:"italic" }}>Continue</button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {flow === "centering" && (
+          <>
+            {cenStage === "pick" && (
+              <>
+                <p style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"3px",
+                  textTransform:"uppercase", fontStyle:"italic", margin:"0 0 12px" }}>Centering Prayer</p>
+                <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:"1.8",
+                  margin:"0 0 20px", textAlign:"left" }}>
+                  Choose one sacred word, or type your own:
+                </p>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:"8px", marginBottom:"16px", justifyContent:"center" }}>
+                  {CEN_PRESETS.map(w => (
+                    <button key={w} type="button" onClick={() => { setCenWord(w); setCenCustom(""); }}
+                      style={{
+                        background: cenWord === w ? `${C.sage}33` : C.bgSecondary,
+                        border:`1.5px solid ${cenWord === w ? C.sage : C.border}`,
+                        borderRadius:"20px", padding:"8px 14px", cursor:"pointer",
+                        color:C.textPrimary, fontFamily:font, fontSize:"12px", fontStyle:"italic" }}>
+                      {w}
+                    </button>
+                  ))}
+                </div>
+                <input value={cenCustom} onChange={e => { setCenCustom(e.target.value); setCenWord(""); }}
+                  placeholder="Your word..."
+                  style={{
+                    width:"100%", boxSizing:"border-box", padding:"12px 14px", marginBottom:"16px",
+                    borderRadius:"8px", border:`1px solid ${C.border}`, background:C.bgSecondary,
+                    color:C.textPrimary, fontFamily:font, fontSize:"14px", fontStyle:"italic" }}
+                />
+                <button type="button" disabled={!cenWord && !cenCustom.trim()}
+                  onClick={() => {
+                    const w = cenCustom.trim() || cenWord;
+                    if (!w) return;
+                    setCenWord(w);
+                    setCenSecLeft(600);
+                    setCenReminderOn(false);
+                    setCenStage("sit");
+                  }}
+                  style={{
+                    background: (!cenWord && !cenCustom.trim()) ? C.textMuted : C.sage,
+                    border:"none", borderRadius:"3px", color:"#fff",
+                    fontSize:"11px", letterSpacing:"2px", textTransform:"uppercase",
+                    padding:"14px 28px", cursor:(!cenWord && !cenCustom.trim()) ? "not-allowed" : "pointer",
+                    fontFamily:font, fontStyle:"italic" }}>Begin 10 minutes</button>
+              </>
+            )}
+            {cenStage === "sit" && (
+              <>
+                <p style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"3px",
+                  textTransform:"uppercase", fontStyle:"italic", margin:"0 0 8px" }}>Centering Prayer</p>
+                <p style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic", margin:"0 0 8px" }}>
+                  {Math.floor(cenSecLeft / 60)}:{String(cenSecLeft % 60).padStart(2, "0")} left
+                </p>
+                <p style={{
+                  color:C.sage, fontSize:"clamp(22px,7vw,34px)", fontWeight:"normal",
+                  fontFamily:font, margin:"24px 0 20px", opacity:0.55, fontStyle:"italic",
+                  letterSpacing:"0.04em",
+                }}>{cenWord}</p>
+                {cenReminderOn && (
+                  <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:"1.65",
+                    margin:"0 0 24px", maxWidth:"340px", marginLeft:"auto", marginRight:"auto" }}>
+                    Thoughts will come. That&apos;s okay. Return to your word.
+                  </p>
+                )}
+                {!cenReminderOn && (
+                  <p style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic", margin:"0 0 24px" }}>
+                    Sit in silence. When your mind wanders, return gently to your word.
+                  </p>
+                )}
+                <button type="button" onClick={() => { clearInterval(cenTimerRef.current); goMenu(); }} style={{ background:"none", border:`1px solid ${C.border}`,
+                  borderRadius:"3px", color:C.textMuted, fontSize:"9px", letterSpacing:"3px",
+                  textTransform:"uppercase", padding:"10px 24px", cursor:"pointer",
+                  fontFamily:font }}>End Early</button>
+              </>
+            )}
+            {cenStage === "done" && (
+              <>
+                <WaveLogo size={36} color={C.sage}/>
+                <p style={{ color:C.textPrimary, fontSize:"clamp(17px,4.5vw,22px)", fontStyle:"italic",
+                  lineHeight:"1.5", margin:"24px 0 28px" }}>
+                  You just practiced one of the oldest prayers in Christian history. Silence is not empty — it&apos;s full of God.
+                </p>
+                <div style={{ display:"flex", gap:"10px", justifyContent:"center", flexWrap:"wrap" }}>
+                  <button type="button" onClick={goMenu} style={{ background:C.bgSecondary,
+                    border:`1px solid ${C.border}`, borderRadius:"3px", color:C.textSoft,
+                    fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase",
+                    padding:"14px 24px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>Back</button>
+                  <button type="button" onClick={() => { if (onSessionComplete) onSessionComplete(); onClose(); }} style={{ background:C.sage, border:"none",
+                    borderRadius:"3px", color:"#fff", fontSize:"10px", letterSpacing:"3px",
+                    textTransform:"uppercase", padding:"14px 28px", cursor:"pointer",
+                    fontFamily:font, fontStyle:"italic" }}>Continue</button>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
       </div>
     </div>
   );
@@ -5969,11 +6446,11 @@ function GuidedTour({ C, font, onDismiss, onGoToSettings, setScreen }) {
     },
     {
       icon: "🫁",
-      title: "Breathe + Quick Check-in.",
-      body: "Breathe offers three techniques — Box Breathing, 4-7-8, and Physiological Sigh — used by therapists and special forces alike. Quick Check-in lets you log mood and get a personal reflection in under 2 minutes.",
+      title: "Breathe & Listen + Quick Check-in.",
+      body: "Breathe & Listen offers three core techniques — Box Breathing, 4-7-8, and Grounding Breath — used by therapists and special forces alike. Foundation+ adds sacred listening practices (Breath Prayer, Examen, Ruminatio, Centering Prayer). Quick Check-in lets you log mood and get a personal reflection in under 2 minutes.",
       preview: (
         <div style={{ display:"flex", gap:"8px", justifyContent:"center", margin:"16px 0" }}>
-          {["Box Breathing","4-7-8","Physiological Sigh"].map(t=>(
+          {["Box Breathing","4-7-8","Grounding Breath"].map(t=>(
             <div key={t} style={{ background:C.bgSecondary, borderRadius:"8px",
               padding:"8px 10px", textAlign:"center" }}>
               <span style={{ color:C.textSoft, fontSize:"9px", fontStyle:"italic" }}>{t}</span>
@@ -7181,7 +7658,7 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
           const tasks = ms.tasks;
           const hasF = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation || isTrialActive;
           const day5Short = hasF ? "Biblical" : "Heavy Day";
-          const labels = ["Reflect", "Guided prayer", "Notebook", "Breathe", day5Short, "Check-in", "Prayer wall"];
+          const labels = ["Reflect", "Guided prayer", "Notebook", "Breathe & Listen", day5Short, "Check-in", "Prayer wall"];
           const doneCount = tasks.filter(Boolean).length;
           if (ms.allDone) {
             return (
@@ -7724,7 +8201,7 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
               {[
                 {icon:"💬", label:"Start a reflection", sub:"Talk through what's on your mind", action:()=>setScreen("reflect"), color:C.accent},
                 {icon:((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?"🔒":"⚡", label:"Quick 2-min check-in", sub:((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?"🔒 Foundation+":"Log your mood in under a minute", action:()=>((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?onUpgrade():setScreen("checkin"), color:((TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive)?C.textMuted:C.amber},
-                {icon:"◈", label:"Breathing exercise", sub:"Calm your nervous system first", action:()=>setScreen("breathe"), color:C.sage},
+                {icon:"◈", label:"Breathe & Listen", sub:"Calm your nervous system first", action:()=>setScreen("breathe"), color:C.sage},
               ].map(item => (
                 <button key={item.label} onClick={item.action} style={{
                   display:"flex", alignItems:"center", gap:"12px", padding:"12px 14px",
@@ -7885,7 +8362,7 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
             {icon:"🌑",label:"Heavy Day",sub:"Lament. Be honest.",bg:`${C.terra}08`,color:C.terra,border:`${C.terra}18`,screen:"heavyday"},
             {icon:"🙏",label:"Gratitude",sub:"Count your blessings",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}18`,screen:"gratitude"},
             {icon:"✉️",label:"Letters to God",sub:"Just you and God",bg:`${C.sage}10`,color:C.sage,border:`${C.sage}20`,screen:"letters"},
-            {icon:"🫁",label:"Breathe",sub:"Guided breathing",bg:`${C.sageLight}12`,color:C.sageDark,border:`${C.sage}18`,screen:"breathe"},
+            {icon:"🫁",label:"Breathe & Listen",sub:"Guided breath & listening",bg:`${C.sageLight}12`,color:C.sageDark,border:`${C.sage}18`,screen:"breathe"},
             {icon:"🪑",label:"The Bench",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive?"🔒 Foundation+":"Your saved insights",bg:`${C.sage}08`,color:C.sage,border:`${C.sage}18`,screen:"bench"},
             {icon:"⚡",label:"Quick Check-in",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation&&!isTrialActive?"🔒 Foundation+":"2 minutes",bg:`${C.amber}12`,color:C.amber,border:`${C.amber}20`,screen:"checkin"},
             {icon:"⚔️",label:"Armor Up",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"5-min morning sequence",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}18`,screen:"armorup"},
@@ -9898,7 +10375,7 @@ const MILESTONES=[
   {id:"sessions_5",icon:"◈",label:"Finding Rhythm",desc:"Completed 5 reflection sessions",scripture:'"Be still, and know that I am God."',ref:"Psalm 46:10"},
   {id:"streak_7",icon:"🔥",label:"7 Steady Days",desc:"Showed up 7 days in a row",scripture:'"His mercies are new every morning."',ref:"Lam. 3:23"},
   {id:"journal_5",icon:"📝",label:"Open Book",desc:"Wrote 5 notebook entries — you're processing",scripture:'"Write the vision and make it plain."',ref:"Habakkuk 2:2"},
-  {id:"breathe_5",icon:"🌬️",label:"Learning to Breathe",desc:"Used the breathing exercise 5 times",scripture:'"He breathed into his nostrils the breath of life."',ref:"Genesis 2:7"},
+  {id:"breathe_5",icon:"🌬️",label:"Learning to Breathe",desc:"Used Breathe & Listen 5 times",scripture:'"He breathed into his nostrils the breath of life."',ref:"Genesis 2:7"},
   {id:"sessions_10",icon:"📖",label:"Going Deeper",desc:"10 reflections — this is becoming real",scripture:'"The heart acquires knowledge."',ref:"Prov. 18:15"},
   {id:"streak_14",icon:"💪",label:"Two Weeks Strong",desc:"14-day streak — a habit is forming",scripture:'"Endurance produces character."',ref:"Romans 5:4"},
   {id:"mood_10",icon:"🧭",label:"Know Thyself",desc:"Logged your mood 10 times",scripture:'"He who knows himself knows his Lord."',ref:"Proverbs 20:5"},
@@ -12369,10 +12846,10 @@ function FeatureGuideScreen({ C, font, setScreen }) {
       tip:"Do it daily — it feeds your Emotional Timeline and keeps your streak.",
     },
     {
-      icon:"🫁", name:"Breathe", tier:"All tiers",
+      icon:"🫁", name:"Breathe & Listen", tier:"All tiers (sacred practices: Foundation+)",
       color:"#4A8A6A",
-      what:"Three clinically-grounded breathing techniques.",
-      how:"Tap Breathe in Your Space. Choose Box Breathing, 4-7-8, or Physiological Sigh. Follow the animated guide.",
+      what:"Three clinically-grounded breathing techniques; Foundation+ adds Breath Prayer, Daily Examen, Ruminatio, and Centering Prayer.",
+      how:"Tap Breathe & Listen in Your Space. Choose Box Breathing, 4-7-8, or Grounding Breath. Follow the animated guide. Sacred listening practices appear when you have Foundation+ (not during trial).",
       tip:"Box Breathing before a Reflect session makes it noticeably deeper.",
     },
     {
@@ -13807,7 +14284,7 @@ const ASSESSMENTS = {
       const pct = Math.round((total/max)*100);
       const label = pct >= 70 ? "Severe anxiety" : pct >= 45 ? "Moderate anxiety" : pct >= 25 ? "Mild anxiety" : "Minimal anxiety";
       const descriptions = {
-        "Severe anxiety": "Your anxiety is running high right now. This doesn't mean it will always be this way — but right now, your nervous system is working overtime. Consider professional support, and use Selah's breathing exercises daily. You deserve relief.",
+        "Severe anxiety": "Your anxiety is running high right now. This doesn't mean it will always be this way — but right now, your nervous system is working overtime. Consider professional support, and use Breathe & Listen daily. You deserve relief.",
         "Moderate anxiety": "You're carrying a noticeable level of stress and worry. It's affecting your peace but likely not fully disrupting your life yet. This is the perfect time to build habits — breathing, reflection, and honest processing can shift this.",
         "Mild anxiety": "You have some worry and stress, but it's within a manageable range. Keep building your awareness. The tools you're developing now will serve you when harder seasons come.",
         "Minimal anxiety": "Your anxiety levels are low right now. This is a strong foundation. Use this season to deepen your self-awareness and build resilience for when challenges arise.",
@@ -14594,7 +15071,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
       monthly:0, annual:0,
       color:C.textMuted,
       tagline:"7 days to experience Selah — no card needed.",
-      features:["2 AI reflections per day","Breathe & guided breathing","Notebook & journal","Heavy Day — lament freely","Gratitude & Letters to God","Prayer Wall (view only)","Crisis resources — always free"],
+      features:["2 AI reflections per day","Breathe & Listen (core techniques)","Notebook & journal","Heavy Day — lament freely","Gratitude & Letters to God","Prayer Wall (view only)","Crisis resources — always free"],
       locked:[]},
     {id:"foundation",name:"Foundation",
       monthly:6, annual:50,
@@ -14619,7 +15096,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
   // Comparison rows — clean, no duplicates, drives toward Deep
   const COMPARE_ROWS = [
     { feature:"Daily AI Reflections",         free:"2/day",   foundation:"3/day",     growth:"5/day",      deep:"Unlimited" },
-    { feature:"Breathe, Notebook, Heavy Day", free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
+    { feature:"Breathe & Listen, Notebook, Heavy Day", free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Gratitude & Letters to God",   free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Biblical Reflections",         free:"—",       foundation:"Full — 75+",growth:"Full — 75+", deep:"Full — 75+" },
     { feature:"Prayer Wall",                  free:"View",    foundation:"Post & hold",growth:"Post & hold",deep:"Post & hold" },
@@ -15361,7 +15838,7 @@ function FeedbackScreen({ C, font, setScreen, feedbackEntries, onSubmit, userNam
             What keeps you coming back? What feels right?
           </p>
           <textarea value={what} onChange={e=>setWhat(e.target.value)}
-            placeholder="The breathing exercises calm me down, the notebook prompts are on point..."
+            placeholder="Breathe & Listen calms me down, the notebook prompts are on point..."
             style={{ width:"100%", minHeight:"80px", boxSizing:"border-box",
               background:C.bgPrimary, border:`1.5px solid ${what?C.accent+"55":"transparent"}`,
               borderRadius:"8px", padding:"12px", color:C.textPrimary,
@@ -15612,7 +16089,7 @@ function AnalyticsScreen({ C, font, setScreen }) {
   // Event name labels
   const eventLabels = {
     app_open:"App Opens", session_start:"Sessions Started", session_complete:"Sessions Completed",
-    checkin_complete:"Check-ins", journal_write:"Journal Entries", breathe_start:"Breathing Started",
+    checkin_complete:"Check-ins", journal_write:"Journal Entries", breathe_start:"Breathe & Listen Started",
     feature_tap:"Feature Taps", sub_view:"Subscription Views", tier_upgrade:"Tier Upgrades",
     trial_start:"Trial Starts", anchor_load:"Anchor Loads", challenge_start:"Challenges Started",
     assessment_start:"Assessments Started", story_open:"Stories Opened", reset_game:"Reset Games Played",
@@ -16633,7 +17110,9 @@ useEffect(() => {
         }
         return <ProgressScreen C={C} font={font} setScreen={setScreen} steadyDays={steadyDays} sessionCount={sessionCount} moodHistory={moodHistory} bestStreak={bestStreak} totalActiveDays={totalActiveDays} sessionHistory={sessionHistory} journalEntries={journalEntries} tier={effectiveTier} onUpgrade={()=>setShowSub(true)}/>;
       }
-      case "breathe": return <BreathingExercise C={C} font={font} onSessionComplete={()=>{ try { markMissionTask(4); } catch (e) {} }} onClose={()=>setScreen("home")}/>;
+      case "breathe": return <BreathingExercise C={C} font={font}
+          showPremiumPractices={(TIER_LEVELS[effectiveTier]||0) >= TIER_LEVELS.foundation && !isTrialActive}
+          onSessionComplete={()=>{ try { markMissionTask(4); } catch (e) {} }} onClose={()=>setScreen("home")}/>;
       case "prayerwall":
         return <PrayerWallScreen C={SC} font={font}
           tier={effectiveTier} isTrialActive={isTrialActive}
