@@ -1888,6 +1888,7 @@ function EmailGateScreen({ onVerified, C, font }) {
   const [visible, setVisible] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(30);
   const [resendMessage, setResendMessage] = useState("");
+  const [resendLoading, setResendLoading] = useState(false);
 
   useEffect(() => { setTimeout(() => setVisible(true), 80); }, []);
 
@@ -1930,8 +1931,10 @@ function EmailGateScreen({ onVerified, C, font }) {
   };
 
   const resendCode = async () => {
+    if (resendLoading) return;
     const trimmed = email.trim().toLowerCase();
     if (!trimmed) return;
+    setResendLoading(true);
     setResendMessage("");
     try {
       const ok = await requestCode(trimmed);
@@ -1944,6 +1947,7 @@ function EmailGateScreen({ onVerified, C, font }) {
     } catch {
       setResendMessage("Something went wrong. Try again in a moment.");
     }
+    setResendLoading(false);
   };
 
   const verifyCode = async () => {
@@ -2049,7 +2053,7 @@ function EmailGateScreen({ onVerified, C, font }) {
               </label>
               <input
                 type="text" inputMode="numeric" maxLength={6} value={code}
-                onChange={e=>{ setCode(e.target.value.replace(/\D/,"")); setError(""); }}
+                onChange={e=>{ setCode(e.target.value.replace(/\D/g,"")); setError(""); }}
                 onKeyDown={e=>e.key==="Enter"&&verifyCode()}
                 placeholder="• • • • • •"
                 style={{ width:"100%", padding:"12px 14px", borderRadius:"8px",
@@ -2071,11 +2075,11 @@ function EmailGateScreen({ onVerified, C, font }) {
                 Resend available in {resendCooldown}s
               </p>
               {resendCooldown <= 0 && (
-                <button type="button" onClick={resendCode}
+                <button type="button" onClick={resendCode} disabled={resendLoading}
                   style={{ background:"none", border:"none", color:textMuted, fontSize:"11px",
                     fontStyle:"italic", padding:0, margin:"6px auto 0", cursor:"pointer",
                     textDecoration:"underline", display:"block", fontFamily:"inherit" }}>
-                  Resend code
+                  {resendLoading ? "Sending..." : "Resend code"}
                 </button>
               )}
               {resendMessage && (
@@ -2919,7 +2923,7 @@ function OnboardingScreen({ onDone, C, font }) {
 
             {/* Method toggle */}
             <div style={{ display:"flex",gap:"8px",marginBottom:"16px" }}>
-              {[{id:"email",icon:"✉️",label:"Email"}].map(m=>(
+              {[{id:"email",icon:"✉️",label:"Email"},{id:"text",icon:"💬",label:"Text"}].map(m=>(
                 <button key={m.id} onClick={()=>setConsentMethod(m.id)} style={{
                   flex:1,background:consentMethod===m.id?`${C.accent}15`:C.bgSecondary,
                   border:`1.5px solid ${consentMethod===m.id?C.accent+"55":"transparent"}`,
@@ -8462,7 +8466,7 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
             {icon:"🌙",label:"Wind Down",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"Sleep routine",bg:`${C.accent}08`,color:C.accent,border:`${C.accent}18`,screen:"winddown"},
             {icon:"📖",label:"Resources",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"Books & wisdom",bg:`${C.amber}12`,color:C.amber,border:`${C.amber}20`,screen:"resources"},
             {icon:"📊",label:"Progress",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"Your growth",bg:`${C.sageLight}25`,color:C.sageDark,border:`${C.sage}22`,screen:"progress"},
-            {icon:"🧩",label:"Assessments",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.deep?"🔒 Deep+":"Know yourself",bg:`${C.accent}12`,color:C.accent,border:`${C.accent}20`,screen:"assessments"},
+            {icon:"🧩",label:"Assessments",sub:"Know yourself",bg:`${C.accent}12`,color:C.accent,border:`${C.accent}20`,screen:"assessments"},
           ].filter(Boolean).map(item=>(
             <button key={item.label} onClick={()=>{
               if(item.screen==="_crisis"){ setShowCrisisPanel(true); return; }
@@ -16380,7 +16384,7 @@ function AnalyticsScreen({ C, font, setScreen }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/analytics?admin=f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04&range=${range}`)
+    fetch(`/api/analytics?admin=selah2026&range=${range}`)
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));
@@ -16621,7 +16625,7 @@ function AnalyticsScreen({ C, font, setScreen }) {
               </p>
               <button onClick={()=>{
                 setLoading(true);
-                fetch(`/api/analytics?admin=f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04&range=${range}`)
+                fetch(`/api/analytics?admin=selah2026&range=${range}`)
                   .then(r=>r.json()).then(d=>{setData(d);setLoading(false);}).catch(()=>setLoading(false));
               }} style={{ background:C.bgSecondary,border:`1px solid ${C.border}`,borderRadius:"6px",padding:"6px 12px",cursor:"pointer",color:C.textMuted,fontSize:"9px",fontFamily:font,fontStyle:"italic" }}>
                 Refresh
@@ -17554,7 +17558,7 @@ useEffect(() => {
         return <ResetScreen C={C} font={font} onClose={()=>setScreen("home")}/>;
       }
       case "checkin": {
-        if (!hasAccess(effectiveTier, "foundation", false)) { // trial does NOT unlock check-in
+        if (!hasAccess(effectiveTier, "foundation", isTrialActive)) {
           return (
             <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
               padding:"60px 20px", boxSizing:"border-box" }}>
@@ -17638,11 +17642,11 @@ useEffect(() => {
               }
               // Try to restore cloud data
               try{
-                const sr=await fetch("/api/sync",{headers:{"Authorization":`Bearer ${d.token}`}});
-                const sd=await sr.json();
-                if(sd.data){
-                  // Merge: cloud data fills in, but don't overwrite current if user has local data
-                  const cloud=sd.data;
+              const sr=await fetch("/api/sync",{headers:{"Authorization":`Bearer ${d.token}`}});
+              const sd=await sr.json();
+              const cloud = sd?.data ?? sd;
+              if(cloud && typeof cloud === "object"){
+                // Merge: cloud data fills in, but don't overwrite current if user has local data
                   if(cloud.journalEntries?.length>journalEntries.length) setJournalEntries(cloud.journalEntries);
                   if(cloud.moodHistory?.length>moodHistory.length) setMoodHistory(cloud.moodHistory);
                   if(cloud.sessionHistory?.length>sessionHistory.length) setSessionHistory(cloud.sessionHistory);
@@ -17750,25 +17754,6 @@ useEffect(() => {
         return <BibleStoriesScreen C={C} font={font} setScreen={setScreen} faithLevel={faithLevel} tier={effectiveTier} isTrialActive={isTrialActive}/>;
       }
       case "assessments": {
-        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.deep) {
-          return (
-            <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
-              padding:"60px 20px", boxSizing:"border-box" }}>
-              <div style={{ maxWidth:"480px", margin:"0 auto" }}>
-                <button onClick={()=>setScreen("home")} style={{ background:"none",border:"none",
-                  cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
-                <UpgradeGate C={C} font={font}
-                  feature="Self-Discovery Assessments"
-                  requiredTier="deep"
-                  onUpgrade={()=>setShowSub(true)}/>
-                <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
-                  textAlign:"center", lineHeight:"1.8", marginTop:"16px" }}>
-                  Deep personality assessments powered by AI. Upgrade to Deep Reflection to unlock.
-                </p>
-              </div>
-            </div>
-          );
-        }
         return <AssessmentsScreen C={C} font={font} setScreen={setScreen} assessmentResults={assessmentResults} setAssessmentResults={setAssessmentResults} tier={effectiveTier} isTrialActive={isTrialActive} onUpgrade={()=>setScreen("subscription")} userName={userName}/>;
       }
       case "feedback": return <FeedbackScreen C={C} font={font} setScreen={setScreen}
@@ -17804,8 +17789,8 @@ useEffect(() => {
             try{
               const sr=await fetch("/api/sync",{headers:{"Authorization":`Bearer ${token}`}});
               const sd=await sr.json();
-              if(sd.data){
-                const cloud=sd.data;
+              const cloud = sd?.data ?? sd;
+              if(cloud && typeof cloud === "object"){
                 if(cloud.tier&&cloud.tier!=="free") setTier(cloud.tier);
                 if(cloud.trialStart) setTrialStart(cloud.trialStart);
                 if(cloud.userName) setUserName(cloud.userName);
@@ -17956,7 +17941,7 @@ useEffect(() => {
       {showFounder&&<FounderNote C={C} font={font} onClose={()=>setShowFounder(false)}/>}
 
       {/* Floating SOS button — always accessible */}
-      {!showSub&&screen!=="breathe"&&screen!=="checkin"&&screen!=="bestill"&&screen!=="armorup"&&screen!=="prayerwall"&&screen!=="bench"&&(
+      {!showSub&&(
         <button onClick={()=>setShowCrisisFromNav(true)} style={{
           position:"fixed", top:"16px", right:"16px",
           width:"36px", height:"36px", borderRadius:"50%",
