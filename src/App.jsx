@@ -6841,7 +6841,7 @@ function MidnightRoomModal({ C, font, onNeedSleep, onNeedBreathe, onStartPresenc
   );
 }
 
-function HomeScreen({ C, font, setScreen, userName, steadyDays, sharingEnabled, onboardingAnswers, faithLevel, isFirstVisit, onDismissWelcome, onLogMood, onActive, lastFeedbackPrompt, onDismissFeedback, sessionCount, tone, quoteFreq, tier, isTrialActive, onUpgrade, moodHistory, sessionHistory, journalEntries, setJournalEntries, seasonalMode, setSeasonalMode, currentSeason, graceUsedWeek, weeklyGraceBudget, showTutorial, setShowTutorial }) {
+function HomeScreen({ C, font, setScreen, userName, steadyDays, sharingEnabled, onboardingAnswers, faithLevel, isFirstVisit, onDismissWelcome, onLogMood, onActive, lastFeedbackPrompt, onDismissFeedback, sessionCount, tone, quoteFreq, tier, isTrialActive, onUpgrade, moodHistory, sessionHistory, journalEntries, setJournalEntries, seasonalMode, setSeasonalMode, currentSeason, graceUsedWeek, weeklyGraceBudget, showTutorial, setShowTutorial, midnightRoomEnabled, selahLetterEnabled }) {
   const [quote,setQuote]=useState(null);
   const [loading,setLoading]=useState(true);
   const [copied,setCopied]=useState(false);
@@ -6932,7 +6932,7 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, sharingEnabled, 
   }, [tier, sessionHistory]);
 
   const versePersonalLine = useMemo(() => buildVerseConnectionLine(onboardingAnswers), [onboardingAnswers]);
-  const letterEligible = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !isTrialActive;
+  const letterEligible = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !isTrialActive && !!selahLetterEnabled;
 
   const getMondayWeekKey = (date = new Date()) => {
     const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -7153,13 +7153,13 @@ Take this week as proof that you are still moving, even in small steps. You are 
     const h = new Date().getHours();
     const inWindow = h >= 23 || h < 4;
     const canAccess = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !isTrialActive;
-    if (!inWindow || isFirstVisit || !canAccess) return;
+    if (!inWindow || isFirstVisit || !canAccess || !midnightRoomEnabled) return;
     let seenKey = null;
     try { seenKey = localStorage.getItem(MIDNIGHT_ROOM_STORAGE_KEY); } catch {}
     if (seenKey === getMidnightRoomNightKey()) return;
     const timer = setTimeout(() => setShowMidnightRoom(true), 700);
     return () => clearTimeout(timer);
-  }, [tier, isTrialActive, isFirstVisit]);
+  }, [tier, isTrialActive, isFirstVisit, midnightRoomEnabled]);
 
   useEffect(() => {
     try {
@@ -7970,15 +7970,6 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
             })()}
           </div>
         </div>
-
-        {dailyPersonalGreeting && (
-          <div style={{ background:C.bgSecondary, border:`1px solid ${C.border}`, borderRadius:"10px",
-            padding:"14px 16px", marginBottom:"16px" }}>
-            <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:1.75, margin:0 }}>
-              {dailyPersonalGreeting}
-            </p>
-          </div>
-        )}
 
         {(() => {
           const now = new Date();
@@ -14000,6 +13991,9 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, darkMode, setDark
   sharingEnabled, setSharingEnabled, pushEnabled, setPushEnabled,
   pushGuidedPrayerEnabled, setPushGuidedPrayerEnabled, pushGuidedPrayerHour, setPushGuidedPrayerHour,
   pushEveningPrayerEnabled, setPushEveningPrayerEnabled, pushEveningPrayerHour, setPushEveningPrayerHour,
+  pushLamentModeEnabled, setPushLamentModeEnabled,
+  selahLetterEnabled, setSelahLetterEnabled,
+  midnightRoomEnabled, setMidnightRoomEnabled,
   dailyReminderHour, setDailyReminderHour,
   onSubscription, onFounder, onReset,
   tone, setTone, quoteFreq, setQuoteFreq, tier, trialDaysLeft, isTrialActive,
@@ -14071,6 +14065,62 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, darkMode, setDark
         transition:"left 0.3s ease",boxShadow:"0 1px 4px rgba(0,0,0,0.15)" }}/>
     </div>
   );
+
+  const handlePushEnabledChange = async (val) => {
+    if(val){
+      try{
+        const perm=await Notification.requestPermission();
+        if(perm==="granted"){
+          const reg = await navigator.serviceWorker.ready;
+          const subscription = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+          });
+          await fetch("/api/push-subscribe", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({
+              subscription,
+              userId: localStorage.getItem("selah_user_id")||"anon",
+              email: userEmail||"",
+              guidedPrayerEnabled: !!pushGuidedPrayerEnabled,
+              guidedPrayerHour: parseInt(pushGuidedPrayerHour, 10),
+              eveningPrayerEnabled: !!pushEveningPrayerEnabled,
+              eveningPrayerHour: parseInt(pushEveningPrayerHour, 10),
+              lamentModeEnabled: !!(((TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !isTrialActive) && pushLamentModeEnabled),
+              lamentModeHour: 23,
+              lamentModeSilent: true,
+              lamentModeTitle: "Lament Mode",
+              lamentModeBody: "",
+              selahLetterEnabled: !!(((TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !isTrialActive) && selahLetterEnabled),
+              selahLetterDayOfWeek: 0,
+              selahLetterHour: 23,
+              selahLetterMinute: 59,
+              selahLetterTitle: "Your letter from Selah is ready.",
+              selahLetterBody: "",
+              selahLetterSilent: false,
+              tzOffsetMinutes: new Date().getTimezoneOffset(),
+            })
+          });
+          setPushEnabled(true);
+        }
+      }catch(e){ console.error("Push subscribe error:", e); }
+    } else {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const subscription = await reg.pushManager.getSubscription();
+        if (subscription) {
+          await fetch("/api/push-subscribe", {
+            method: "DELETE",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({ endpoint: subscription.endpoint })
+          });
+          await subscription.unsubscribe();
+        }
+      } catch(e) { console.error("Push unsubscribe error:", e); }
+      setPushEnabled(false);
+    }
+  };
 
   const TONES = [
     { id:"direct",    icon:"⚡", label:"Direct & Grounded",      ex:"What part of that hit you hardest?" },
@@ -14776,168 +14826,121 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, darkMode, setDark
             ))}
           </div>
 
-          {/* Push Notifications */}
+          {/* Notifications */}
           <div style={{ background:C.bgSecondary,borderRadius:"10px",
             overflow:"hidden",border:`1px solid ${C.border}`,marginTop:"12px" }}>
-            <div style={{ display:"flex",alignItems:"center",gap:"14px",padding:"16px 18px" }}>
-              <span style={{ fontSize:"18px",flexShrink:0 }}>🔔</span>
+            <div style={{ padding:"14px 18px", borderBottom:`1px solid ${C.border}` }}>
+              <p style={{ color:C.textPrimary,fontSize:"13px",fontFamily:font,margin:"0 0 2px" }}>Notifications</p>
+              <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",margin:0 }}>
+                Manage every reminder in one place.
+              </p>
+            </div>
+
+            <div style={{ display:"flex",alignItems:"center",gap:"12px",padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
               <div style={{ flex:1 }}>
-                <p style={{ color:C.textPrimary,fontSize:"13px",fontFamily:font,
-                  margin:"0 0 2px" }}>Push Notifications</p>
-                <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",margin:0 }}>
-                  {canCustomizeReminderTime
-                    ? `Verse of the day · daily at ${reminderHourLabel}`
-                    : "Verse of the day · daily reminder at 8am"}
+                <p style={{ color:C.textPrimary,fontSize:"12px",fontFamily:font,margin:"0 0 2px" }}>Push Notifications</p>
+                <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",margin:0,lineHeight:1.5 }}>
+                  Enable all Selah notifications
                 </p>
               </div>
-              <Toggle v={pushEnabled} onChange={async(val)=>{
-                if(val){
-                  try{
-                    const perm=await Notification.requestPermission();
-                    if(perm==="granted"){
-                      const reg = await navigator.serviceWorker.ready;
-                      const subscription = await reg.pushManager.subscribe({
-                        userVisibleOnly: true,
-                        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
-                      });
-                      await fetch("/api/push-subscribe", {
-                        method: "POST",
-                        headers: {"Content-Type":"application/json"},
-                        body: JSON.stringify({
-                          subscription,
-                          userId: localStorage.getItem("selah_user_id")||"anon",
-                          email: userEmail||"",
-                          guidedPrayerEnabled: !!pushGuidedPrayerEnabled,
-                          guidedPrayerHour: parseInt(pushGuidedPrayerHour, 10),
-                          eveningPrayerEnabled: !!pushEveningPrayerEnabled,
-                          eveningPrayerHour: parseInt(pushEveningPrayerHour, 10),
-                          lamentModeEnabled: (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !(trialDaysLeft > 0),
-                          lamentModeHour: 23,
-                          lamentModeSilent: true,
-                          lamentModeTitle: "Lament Mode",
-                          lamentModeBody: "",
-                          selahLetterEnabled: (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !(trialDaysLeft > 0),
-                          selahLetterDayOfWeek: 0,
-                          selahLetterHour: 23,
-                          selahLetterMinute: 59,
-                          selahLetterTitle: "Your letter from Selah is ready.",
-                          selahLetterBody: "",
-                          selahLetterSilent: false,
-                          tzOffsetMinutes: new Date().getTimezoneOffset(),
-                        })
-                      });
-                      setPushEnabled(true);
-                    }
-                  }catch(e){ console.error("Push subscribe error:", e); }
-                } else {
-                  try {
-                    const reg = await navigator.serviceWorker.ready;
-                    const subscription = await reg.pushManager.getSubscription();
-                    if (subscription) {
-                      await fetch("/api/push-subscribe", {
-                        method: "DELETE",
-                        headers: {"Content-Type":"application/json"},
-                        body: JSON.stringify({ endpoint: subscription.endpoint })
-                      });
-                      await subscription.unsubscribe();
-                    }
-                  } catch(e) { console.error("Push unsubscribe error:", e); }
-                  setPushEnabled(false);
-                }
-              }}/>
+              <Toggle v={pushEnabled} onChange={handlePushEnabledChange}/>
+            </div>
+
+            <div style={{ display:"flex",alignItems:"center",gap:"12px",padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
+              <div style={{ flex:1 }}>
+                <p style={{ color:C.textPrimary,fontSize:"12px",fontFamily:font,margin:"0 0 2px" }}>Daily Verse</p>
+                <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",margin:0,lineHeight:1.5 }}>
+                  Your daily scripture at your chosen time
+                </p>
+              </div>
+              <Toggle v={pushEnabled} onChange={handlePushEnabledChange}/>
             </div>
             {canCustomizeReminderTime && (
-              <div style={{ borderTop:`1px solid ${C.border}`, padding:"14px 18px 16px" }}>
-                <label htmlFor="selah-daily-reminder-hour" style={{ display:"block", color:C.textMuted, fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", fontStyle:"italic", marginBottom:"10px", fontFamily:font }}>
-                  Daily reminder time
+              <div style={{ padding:"12px 18px 14px", borderBottom:`1px solid ${C.border}` }}>
+                <label htmlFor="selah-daily-reminder-hour" style={{ display:"block", color:C.textMuted, fontSize:"9px", letterSpacing:"1.5px", textTransform:"uppercase", fontStyle:"italic", marginBottom:"8px", fontFamily:font }}>
+                  Preferred time
                 </label>
-                <select
-                  id="selah-daily-reminder-hour"
-                  value={dailyReminderHour}
+                <select id="selah-daily-reminder-hour" value={dailyReminderHour}
                   onChange={(e) => setDailyReminderHour(normalizeDailyReminderHour(e.target.value))}
-                  style={{
-                    width:"100%", maxWidth:"280px", boxSizing:"border-box",
-                    background:C.bgPrimary, color:C.textPrimary, border:`1px solid ${C.border}`,
-                    borderRadius:"6px", padding:"12px 14px", fontSize:"13px", fontFamily:font, fontStyle:"italic",
-                    cursor:"pointer", outline:"none", appearance:"auto",
-                  }}
-                >
-                  {REMINDER_HOUR_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
+                  style={{ width:"100%", maxWidth:"280px", boxSizing:"border-box", background:C.bgPrimary, color:C.textPrimary, border:`1px solid ${C.border}`, borderRadius:"6px", padding:"10px 12px", fontSize:"12px", fontFamily:font, fontStyle:"italic", cursor:"pointer", outline:"none", appearance:"auto" }}>
+                  {REMINDER_HOUR_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
                 </select>
               </div>
             )}
-            {pushEnabled && (
-              <>
-                <div style={{ borderTop:`1px solid ${C.border}`, padding:"14px 18px" }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"10px" }}>
-                    <div style={{ flex:1 }}>
-                      <p style={{ color:C.textPrimary, fontSize:"12px", fontFamily:font, margin:"0 0 2px" }}>Guided Prayer</p>
-                      <p style={{ color:C.textMuted, fontSize:"10px", fontStyle:"italic", margin:0, lineHeight:1.5 }}>
-                        A nudge to open Selah for guided prayer
-                      </p>
-                    </div>
-                    <Toggle v={pushGuidedPrayerEnabled} onChange={setPushGuidedPrayerEnabled}/>
-                  </div>
-                  {pushGuidedPrayerEnabled && (
-                    <div style={{ marginTop:"8px" }}>
-                      <label htmlFor="selah-guided-prayer-hour" style={{ display:"block", color:C.textMuted, fontSize:"9px", letterSpacing:"1.5px", textTransform:"uppercase", fontStyle:"italic", marginBottom:"8px", fontFamily:font }}>
-                        Preferred time
-                      </label>
-                      <select
-                        id="selah-guided-prayer-hour"
-                        value={pushGuidedPrayerHour}
-                        onChange={(e) => setPushGuidedPrayerHour(normalizeDailyReminderHour(e.target.value))}
-                        style={{
-                          width:"100%", maxWidth:"280px", boxSizing:"border-box",
-                          background:C.bgPrimary, color:C.textPrimary, border:`1px solid ${C.border}`,
-                          borderRadius:"6px", padding:"10px 12px", fontSize:"12px", fontFamily:font, fontStyle:"italic",
-                          cursor:"pointer", outline:"none",
-                        }}
-                      >
-                        {REMINDER_HOUR_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-                <div style={{ borderTop:`1px solid ${C.border}`, padding:"14px 18px 16px" }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"10px" }}>
-                    <div style={{ flex:1 }}>
-                      <p style={{ color:C.textPrimary, fontSize:"12px", fontFamily:font, margin:"0 0 2px" }}>Evening Prayer</p>
-                      <p style={{ color:C.textMuted, fontSize:"10px", fontStyle:"italic", margin:0, lineHeight:1.5 }}>
-                        A quiet invite for tonight&apos;s evening prayer
-                      </p>
-                    </div>
-                    <Toggle v={pushEveningPrayerEnabled} onChange={setPushEveningPrayerEnabled}/>
-                  </div>
-                  {pushEveningPrayerEnabled && (
-                    <div style={{ marginTop:"8px" }}>
-                      <label htmlFor="selah-evening-prayer-hour" style={{ display:"block", color:C.textMuted, fontSize:"9px", letterSpacing:"1.5px", textTransform:"uppercase", fontStyle:"italic", marginBottom:"8px", fontFamily:font }}>
-                        Preferred time
-                      </label>
-                      <select
-                        id="selah-evening-prayer-hour"
-                        value={pushEveningPrayerHour}
-                        onChange={(e) => setPushEveningPrayerHour(normalizeDailyReminderHour(e.target.value))}
-                        style={{
-                          width:"100%", maxWidth:"280px", boxSizing:"border-box",
-                          background:C.bgPrimary, color:C.textPrimary, border:`1px solid ${C.border}`,
-                          borderRadius:"6px", padding:"10px 12px", fontSize:"12px", fontFamily:font, fontStyle:"italic",
-                          cursor:"pointer", outline:"none",
-                        }}
-                      >
-                        {REMINDER_HOUR_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              </>
+
+            <div style={{ display:"flex",alignItems:"center",gap:"12px",padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
+              <div style={{ flex:1 }}>
+                <p style={{ color:C.textPrimary,fontSize:"12px",fontFamily:font,margin:"0 0 2px" }}>Guided Prayer</p>
+                <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",margin:0,lineHeight:1.5 }}>
+                  A nudge to open Selah for guided prayer
+                </p>
+              </div>
+              <Toggle v={pushGuidedPrayerEnabled} onChange={setPushGuidedPrayerEnabled}/>
+            </div>
+            {pushGuidedPrayerEnabled && (
+              <div style={{ padding:"12px 18px 14px", borderBottom:`1px solid ${C.border}` }}>
+                <label htmlFor="selah-guided-prayer-hour" style={{ display:"block", color:C.textMuted, fontSize:"9px", letterSpacing:"1.5px", textTransform:"uppercase", fontStyle:"italic", marginBottom:"8px", fontFamily:font }}>
+                  Preferred time
+                </label>
+                <select id="selah-guided-prayer-hour" value={pushGuidedPrayerHour}
+                  onChange={(e) => setPushGuidedPrayerHour(normalizeDailyReminderHour(e.target.value))}
+                  style={{ width:"100%", maxWidth:"280px", boxSizing:"border-box", background:C.bgPrimary, color:C.textPrimary, border:`1px solid ${C.border}`, borderRadius:"6px", padding:"10px 12px", fontSize:"12px", fontFamily:font, fontStyle:"italic", cursor:"pointer", outline:"none" }}>
+                  {REMINDER_HOUR_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                </select>
+              </div>
             )}
+
+            <div style={{ display:"flex",alignItems:"center",gap:"12px",padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
+              <div style={{ flex:1 }}>
+                <p style={{ color:C.textPrimary,fontSize:"12px",fontFamily:font,margin:"0 0 2px" }}>Evening Prayer</p>
+                <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",margin:0,lineHeight:1.5 }}>
+                  A gentle evening wind-down reminder
+                </p>
+              </div>
+              <Toggle v={pushEveningPrayerEnabled} onChange={setPushEveningPrayerEnabled}/>
+            </div>
+            {pushEveningPrayerEnabled && (
+              <div style={{ padding:"12px 18px 14px", borderBottom:`1px solid ${C.border}` }}>
+                <label htmlFor="selah-evening-prayer-hour" style={{ display:"block", color:C.textMuted, fontSize:"9px", letterSpacing:"1.5px", textTransform:"uppercase", fontStyle:"italic", marginBottom:"8px", fontFamily:font }}>
+                  Preferred time
+                </label>
+                <select id="selah-evening-prayer-hour" value={pushEveningPrayerHour}
+                  onChange={(e) => setPushEveningPrayerHour(normalizeDailyReminderHour(e.target.value))}
+                  style={{ width:"100%", maxWidth:"280px", boxSizing:"border-box", background:C.bgPrimary, color:C.textPrimary, border:`1px solid ${C.border}`, borderRadius:"6px", padding:"10px 12px", fontSize:"12px", fontFamily:font, fontStyle:"italic", cursor:"pointer", outline:"none" }}>
+                  {REMINDER_HOUR_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                </select>
+              </div>
+            )}
+
+            <div style={{ display:"flex",alignItems:"center",gap:"12px",padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
+              <div style={{ flex:1 }}>
+                <p style={{ color:C.textPrimary,fontSize:"12px",fontFamily:font,margin:"0 0 2px" }}>Lament Mode</p>
+                <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",margin:0,lineHeight:1.5 }}>
+                  A quiet nudge at 11pm
+                </p>
+              </div>
+              <Toggle v={pushLamentModeEnabled} onChange={setPushLamentModeEnabled}/>
+            </div>
+
+            <div style={{ display:"flex",alignItems:"center",gap:"12px",padding:"14px 18px",borderBottom:`1px solid ${C.border}` }}>
+              <div style={{ flex:1 }}>
+                <p style={{ color:C.textPrimary,fontSize:"12px",fontFamily:font,margin:"0 0 2px" }}>Selah&apos;s Letter</p>
+                <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",margin:0,lineHeight:1.5 }}>
+                  Your weekly personal letter every Sunday at 11:59pm
+                </p>
+              </div>
+              <Toggle v={selahLetterEnabled} onChange={setSelahLetterEnabled}/>
+            </div>
+
+            <div style={{ display:"flex",alignItems:"center",gap:"12px",padding:"14px 18px" }}>
+              <div style={{ flex:1 }}>
+                <p style={{ color:C.textPrimary,fontSize:"12px",fontFamily:font,margin:"0 0 2px" }}>Midnight Room</p>
+                <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",margin:0,lineHeight:1.5 }}>
+                  A gentle in-app presence check between 11pm and 4am
+                </p>
+              </div>
+              <Toggle v={midnightRoomEnabled} onChange={setMidnightRoomEnabled}/>
+            </div>
           </div>
 
           <div style={{ textAlign:"center",marginTop:"24px" }}>
@@ -17541,6 +17544,12 @@ function SelahAppInner() {
   const [pushLamentModeEnabled, setPushLamentModeEnabled] = useState(
     has("pushLamentModeEnabled") ? !!saved.pushLamentModeEnabled : true
   );
+  const [selahLetterEnabled, setSelahLetterEnabled] = useState(
+    has("selahLetterEnabled") ? !!saved.selahLetterEnabled : true
+  );
+  const [midnightRoomEnabled, setMidnightRoomEnabled] = useState(
+    has("midnightRoomEnabled") ? !!saved.midnightRoomEnabled : true
+  );
   const [dailyReminderHour, setDailyReminderHour] = useState(
     has("dailyReminderHour") ? normalizeDailyReminderHour(saved.dailyReminderHour) : "8"
   );
@@ -17814,7 +17823,7 @@ useEffect(() => {
     saveToStorage({
       appScreen: appScreen === "main" ? "main" : appScreen,
       themeId, darkMode, fontId, faithLevel, userName, tier, trialStart, steadyDays, sessionCount,
-      sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour, pushLamentModeEnabled,
+      sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour, pushLamentModeEnabled, selahLetterEnabled, midnightRoomEnabled,
       dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
       journalEntries, moodHistory, lastVisit: Date.now(),
       feedbackEntries, lastFeedbackPrompt,
@@ -17826,7 +17835,7 @@ useEffect(() => {
       const syncData = {
         appScreen: appScreen === "main" ? "main" : appScreen,
         themeId, darkMode, fontId, faithLevel, userName, tier, trialStart, steadyDays, sessionCount,
-        sharingEnabled, pushEnabled, pushLamentModeEnabled, dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
+        sharingEnabled, pushEnabled, pushLamentModeEnabled, selahLetterEnabled, midnightRoomEnabled, dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
         journalEntries, moodHistory, lastVisit: Date.now(),
         feedbackEntries, lastFeedbackPrompt,
         lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, journeyProgress, sessionHistory, savedReflections, assessmentResults, userEmail, foundingMember, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
@@ -17856,7 +17865,7 @@ useEffect(() => {
         });
     }
   }, [appScreen, themeId, darkMode, fontId, faithLevel, userName, tier, trialStart, steadyDays,
-      sessionCount, sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour, pushLamentModeEnabled,
+      sessionCount, sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour, pushLamentModeEnabled, selahLetterEnabled, midnightRoomEnabled,
       dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers,
       isFirstVisit, journalEntries, moodHistory, feedbackEntries, lastFeedbackPrompt,
       lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, journeyProgress, sessionHistory, savedReflections, assessmentResults, userEmail, foundingMember, stripeEmail, seasonalMode, letters, gratitudeLog,
@@ -17905,7 +17914,7 @@ useEffect(() => {
             lamentModeSilent: true,
             lamentModeTitle: "Lament Mode",
             lamentModeBody: "",
-            selahLetterEnabled: !!selahLetterAllowed,
+            selahLetterEnabled: !!(selahLetterAllowed && selahLetterEnabled),
             selahLetterDayOfWeek: 0,
             selahLetterHour: 23,
             selahLetterMinute: 59,
@@ -17927,6 +17936,7 @@ useEffect(() => {
     pushEveningPrayerEnabled,
     pushEveningPrayerHour,
     pushLamentModeEnabled,
+    selahLetterEnabled,
     lamentModeAllowed,
     selahLetterAllowed,
     userEmail,
@@ -18195,7 +18205,9 @@ useEffect(() => {
           tier={effectiveTier} isTrialActive={isTrialActive} onUpgrade={()=>setShowSub(true)}
           moodHistory={moodHistory} sessionHistory={sessionHistory} journalEntries={journalEntries} setJournalEntries={setJournalEntries}
           seasonalMode={seasonalMode} setSeasonalMode={setSeasonalMode} currentSeason={currentSeason}
-          graceUsedWeek={graceUsedWeek} weeklyGraceBudget={weeklyGraceBudget} benchItems={benchItems} setBenchItems={setBenchItems}/>
+          graceUsedWeek={graceUsedWeek} weeklyGraceBudget={weeklyGraceBudget} benchItems={benchItems} setBenchItems={setBenchItems}
+          midnightRoomEnabled={midnightRoomEnabled}
+          selahLetterEnabled={selahLetterEnabled}/>
       );
       case "reflect": {
         if (!hasAccess(effectiveTier, "foundation", isTrialActive)) {
@@ -18574,6 +18586,9 @@ useEffect(() => {
           pushGuidedPrayerHour={pushGuidedPrayerHour} setPushGuidedPrayerHour={setPushGuidedPrayerHour}
           pushEveningPrayerEnabled={pushEveningPrayerEnabled} setPushEveningPrayerEnabled={setPushEveningPrayerEnabled}
           pushEveningPrayerHour={pushEveningPrayerHour} setPushEveningPrayerHour={setPushEveningPrayerHour}
+          pushLamentModeEnabled={pushLamentModeEnabled} setPushLamentModeEnabled={setPushLamentModeEnabled}
+          selahLetterEnabled={selahLetterEnabled} setSelahLetterEnabled={setSelahLetterEnabled}
+          midnightRoomEnabled={midnightRoomEnabled} setMidnightRoomEnabled={setMidnightRoomEnabled}
           dailyReminderHour={dailyReminderHour} setDailyReminderHour={setDailyReminderHour}
           tone={tone} setTone={setTone}
           quoteFreq={quoteFreq} setQuoteFreq={setQuoteFreq}
@@ -18627,6 +18642,8 @@ useEffect(() => {
                   if(typeof cloud.foundingMember === "boolean") setFoundingMember(cloud.foundingMember);
                   if (cloud.dailyReminderHour != null) setDailyReminderHour(normalizeDailyReminderHour(cloud.dailyReminderHour));
                   if (typeof cloud.pushLamentModeEnabled === "boolean") setPushLamentModeEnabled(cloud.pushLamentModeEnabled);
+                  if (typeof cloud.selahLetterEnabled === "boolean") setSelahLetterEnabled(cloud.selahLetterEnabled);
+                  if (typeof cloud.midnightRoomEnabled === "boolean") setMidnightRoomEnabled(cloud.midnightRoomEnabled);
                 }
               }catch{}
               // Also check Stripe directly for active subscription
@@ -18765,6 +18782,8 @@ useEffect(() => {
                 if(cloud.steadyDays>steadyDays) setSteadyDays(cloud.steadyDays);
                 if (cloud.dailyReminderHour != null) setDailyReminderHour(normalizeDailyReminderHour(cloud.dailyReminderHour));
                 if (typeof cloud.pushLamentModeEnabled === "boolean") setPushLamentModeEnabled(cloud.pushLamentModeEnabled);
+                if (typeof cloud.selahLetterEnabled === "boolean") setSelahLetterEnabled(cloud.selahLetterEnabled);
+                if (typeof cloud.midnightRoomEnabled === "boolean") setMidnightRoomEnabled(cloud.midnightRoomEnabled);
                 if (cloud.journeyProgress?.byJourney || cloud.journeyProgress?.completed?.length)
                   setJourneyProgress((prev) => mergeJourneyProgressState(prev, cloud.journeyProgress));
                 if(cloud.onboardingAnswers?.name){
