@@ -6505,6 +6505,12 @@ function GuidedTour({ C, font, onDismiss, onGoToSettings, setScreen }) {
       action: { label:"Visit The Wall", fn:()=>{ onDismiss(); setScreen("prayerwallselector"); } },
     },
     {
+      icon: "💌",
+      title: "Selah's Letter",
+      body: "Every Monday morning, Selah writes you a personal letter based on what you've shared. It knows you.",
+      preview: null,
+    },
+    {
       icon: "🫁",
       title: "Breathe & Listen + Quick Check-in.",
       body: "Breathe & Listen offers three core techniques — Box Breathing, 4-7-8, and Grounding Breath — used by therapists and special forces alike. Foundation+ adds sacred listening practices (Breath Prayer, Examen, Ruminatio, Centering Prayer). Quick Check-in lets you log mood and get a personal reflection in under 2 minutes.",
@@ -6854,6 +6860,9 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, sharingEnabled, 
   const [weekInWords, setWeekInWords] = useState(null);
   const [weekInWordsLoading, setWeekInWordsLoading] = useState(false);
   const [dailyPersonalGreeting, setDailyPersonalGreeting] = useState(null);
+  const [showSelahLetter, setShowSelahLetter] = useState(false);
+  const [selahLetterText, setSelahLetterText] = useState("");
+  const [selahLetterLoading, setSelahLetterLoading] = useState(false);
 
   // Time of day — living home screen
   const [timeOfDay, setTimeOfDay] = useState(() => {
@@ -6905,6 +6914,170 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, sharingEnabled, 
   }, [tier, sessionHistory]);
 
   const versePersonalLine = useMemo(() => buildVerseConnectionLine(onboardingAnswers), [onboardingAnswers]);
+  const letterEligible = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !isTrialActive;
+
+  const getMondayWeekKey = (date = new Date()) => {
+    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const day = d.getDay(); // 0 = Sun, 1 = Mon
+    const delta = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + delta);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  };
+
+  const getLetterReflectionHistory = () => {
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const normalize = (arr) => (Array.isArray(arr) ? arr : []).filter((s) => {
+      if (!s?.date) return false;
+      const t = new Date(s.date).getTime();
+      return !Number.isNaN(t) && (now - t) >= 0 && (now - t) <= weekMs;
+    });
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      const fromStorage = normalize(saved?.sessionHistory);
+      if (fromStorage.length) return fromStorage.slice(0, 20);
+    } catch {}
+    return normalize(sessionHistory).slice(0, 20);
+  };
+
+  useEffect(() => {
+    if (!letterEligible) return;
+    const now = new Date();
+    const isMonday = now.getDay() === 1;
+    const qp = new URLSearchParams(window.location.search);
+    const mode = String(qp.get("mode") || "").toLowerCase();
+    const letterFlag = qp.get("letter") === "1";
+    const hash = String(window.location.hash || "").replace("#", "").toLowerCase();
+    const fromNotification = letterFlag || mode === "selahletter" || hash === "selahletter";
+    if (!isMonday && !fromNotification) return;
+
+    const weekKey = getMondayWeekKey(now);
+    try {
+      const shown = localStorage.getItem("selah_letter_shown_week");
+      if (shown === weekKey) return;
+    } catch {}
+
+    let cancelled = false;
+    const openLetter = async () => {
+      setSelahLetterLoading(true);
+      try {
+        const cached = JSON.parse(localStorage.getItem("selah_letter_weekly_cache") || "null");
+        if (cached && cached.week === weekKey && typeof cached.text === "string" && cached.text.trim()) {
+          if (!cancelled) {
+            setSelahLetterText(cached.text.trim());
+            setShowSelahLetter(true);
+            try { localStorage.setItem("selah_letter_shown_week", weekKey); } catch {}
+          }
+          return;
+        }
+      } catch {}
+
+      const name = String(userName || onboardingAnswers?.name || "friend").trim() || "friend";
+      const brought = String(onboardingAnswers?.goal || onboardingAnswers?.why || onboardingAnswers?.reason || onboardingAnswers?.brought || "").trim();
+      const carrying = String(onboardingAnswers?.biggest || onboardingAnswers?.needMost || onboardingAnswers?.carrying || "").trim();
+      const tonePref = String(onboardingAnswers?.tone || onboardingAnswers?.voice || tone || "").trim();
+      const faithPref = Number.isFinite(faithLevel) ? faithLevel : 2;
+      const recent = getLetterReflectionHistory();
+      const reflectionLines = recent.length
+        ? recent.map((s, i) => {
+            const d = s?.date ? new Date(s.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+            const insight = String(s?.insight || "").trim();
+            const takeaway = String(s?.takeaway || "").trim();
+            const action = String(s?.action || "").trim();
+            const category = String(s?.category || "Reflection").trim();
+            return `${i + 1}. ${d} · ${category}${insight ? ` · Insight: ${insight}` : ""}${takeaway ? ` · Takeaway: ${takeaway}` : ""}${action ? ` · Action: ${action}` : ""}`;
+          }).join("\n")
+        : "No reflection sessions in the last 7 days.";
+
+      try {
+        const r = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 700,
+            messages: [{
+              role: "user",
+              content:
+`Write a personal weekly letter from Selah.
+
+User profile:
+- Name: ${name}
+- What brought them here: ${brought || "Not specified"}
+- What they're carrying: ${carrying || "Not specified"}
+- Faith level (0-4): ${faithPref}
+- How they want to be spoken to: ${tonePref || "Not specified"}
+
+Last 7 days of reflection history:
+${reflectionLines}
+
+Hard format requirements:
+- Start exactly with: "Dear ${name},"
+- 3-4 paragraphs, warm, honest, specific to what they've shared, and encouraging without sounding fake.
+- End exactly with: "— Selah"
+- No bullet points, no headings, no markdown.`
+            }],
+          }),
+        });
+        const d = await r.json();
+        const text = d.content?.map((b) => b.text || "").join("").trim();
+        if (!cancelled) {
+          const fallback =
+`Dear ${name},
+
+You kept showing up this week, even when your heart was heavy. That matters more than it feels like right now.
+
+What you shared carried real weight, and you were honest about it instead of pretending you were fine. That kind of honesty is not weakness, it is courage.
+
+Take this week as proof that you are still moving, even in small steps. You are not invisible here.
+
+— Selah`;
+          const finalText = text || fallback;
+          setSelahLetterText(finalText);
+          setShowSelahLetter(true);
+          try {
+            localStorage.setItem("selah_letter_weekly_cache", JSON.stringify({ week: weekKey, text: finalText }));
+            localStorage.setItem("selah_letter_shown_week", weekKey);
+          } catch {}
+        }
+      } catch {
+        if (!cancelled) {
+          const fallback =
+`Dear ${name},
+
+You kept showing up this week, even when your heart was heavy. That matters more than it feels like right now.
+
+What you shared carried real weight, and you were honest about it instead of pretending you were fine. That kind of honesty is not weakness, it is courage.
+
+Take this week as proof that you are still moving, even in small steps. You are not invisible here.
+
+— Selah`;
+          setSelahLetterText(fallback);
+          setShowSelahLetter(true);
+          try {
+            localStorage.setItem("selah_letter_weekly_cache", JSON.stringify({ week: weekKey, text: fallback }));
+            localStorage.setItem("selah_letter_shown_week", weekKey);
+          } catch {}
+        }
+      } finally {
+        if (!cancelled) setSelahLetterLoading(false);
+      }
+    };
+    openLetter();
+
+    if (fromNotification) {
+      try {
+        qp.delete("letter");
+        if (mode === "selahletter") qp.delete("mode");
+        const next = `${window.location.pathname}${qp.toString() ? `?${qp.toString()}` : ""}`;
+        window.history.replaceState({}, "", next);
+      } catch {}
+    }
+    return () => { cancelled = true; };
+  }, [letterEligible, userName, onboardingAnswers, faithLevel, tone, sessionHistory]);
 
   useEffect(() => {
     try {
@@ -8740,6 +8913,37 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
       {showFeedbackPopup&&!showTutorial&&<FeedbackPopup C={C} font={font}
         onGoToFeedback={()=>{setShowFeedbackPopup(false);if(onDismissFeedback)onDismissFeedback();setScreen("feedback");}}
         onDismiss={()=>{setShowFeedbackPopup(false);if(onDismissFeedback)onDismissFeedback();}}/>}
+      {showSelahLetter && !showTutorial && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          zIndex:420, padding:"24px", fontFamily:font }}>
+          <div style={{ width:"100%", maxWidth:"520px", maxHeight:"86vh",
+            overflowY:"auto", background:C.bgPrimary, borderRadius:"16px",
+            border:`1px solid ${C.sage}33`, boxShadow:"0 20px 60px rgba(0,0,0,0.25)",
+            padding:"24px 22px" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"12px" }}>
+              <p style={{ color:C.sage, fontSize:"9px", letterSpacing:"3px",
+                textTransform:"uppercase", fontStyle:"italic", margin:0 }}>Selah&apos;s Letter</p>
+              <button onClick={()=>setShowSelahLetter(false)} style={{
+                background:"none", border:`1px solid ${C.border}`, borderRadius:"999px",
+                color:C.textMuted, fontSize:"10px", letterSpacing:"1.5px",
+                padding:"6px 14px", cursor:"pointer", fontFamily:font }}>
+                Close
+              </button>
+            </div>
+            {selahLetterLoading ? (
+              <p style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic", lineHeight:"1.9", margin:0 }}>
+                Preparing your letter...
+              </p>
+            ) : (
+              <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic",
+                lineHeight:"1.95", margin:0, whiteSpace:"pre-line" }}>
+                {selahLetterText}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
       {showMidnightRoom && (
         <MidnightRoomModal C={C} font={font}
           onNeedSleep={() => {
@@ -14561,6 +14765,13 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, darkMode, setDark
                           lamentModeSilent: true,
                           lamentModeTitle: "Lament Mode",
                           lamentModeBody: "",
+                          selahLetterEnabled: (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !(trialDaysLeft > 0),
+                          selahLetterDayOfWeek: 0,
+                          selahLetterHour: 23,
+                          selahLetterMinute: 59,
+                          selahLetterTitle: "Your letter from Selah is ready.",
+                          selahLetterBody: "",
+                          selahLetterSilent: false,
                           tzOffsetMinutes: new Date().getTimezoneOffset(),
                         })
                       });
@@ -15893,6 +16104,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
     { feature:"Gratitude & Letters to God",   free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Biblical Reflections",         free:"—",       foundation:"Full — 75+",growth:"Full — 75+", deep:"Full — 75+" },
     { feature:"Prayer Wall",                  free:"View",    foundation:"Post & hold",growth:"Post & hold",deep:"Post & hold" },
+    { feature:"Selah's Letter",               free:"✗",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Daily Anchor",                 free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"The Bench (saved insights)",   free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Quick Check-in",               free:"—",       foundation:"✓",         growth:"✓",          deep:"✓" },
@@ -17373,6 +17585,7 @@ useEffect(() => {
   const effectiveTier = adminMode ? "deep" : tier;
   const isTrialActive = effectiveTier === "free" && trialDaysLeft > 0;
   const lamentModeAllowed = (TIER_LEVELS[effectiveTier] || 0) >= TIER_LEVELS.foundation && !isTrialActive;
+  const selahLetterAllowed = (TIER_LEVELS[effectiveTier] || 0) >= TIER_LEVELS.foundation && !isTrialActive;
   const weeklyGraceBudget = weeklyStreakGraceBudget(effectiveTier, isTrialActive);
 
   // ── Streak logic ──
@@ -17629,6 +17842,13 @@ useEffect(() => {
             lamentModeSilent: true,
             lamentModeTitle: "Lament Mode",
             lamentModeBody: "",
+            selahLetterEnabled: !!selahLetterAllowed,
+            selahLetterDayOfWeek: 0,
+            selahLetterHour: 23,
+            selahLetterMinute: 59,
+            selahLetterTitle: "Your letter from Selah is ready.",
+            selahLetterBody: "",
+            selahLetterSilent: false,
             tzOffsetMinutes: new Date().getTimezoneOffset(),
           }),
         });
@@ -17645,6 +17865,7 @@ useEffect(() => {
     pushEveningPrayerHour,
     pushLamentModeEnabled,
     lamentModeAllowed,
+    selahLetterAllowed,
     userEmail,
   ]);
 
