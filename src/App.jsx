@@ -884,6 +884,27 @@ const THEMES = {
 
 };
 
+const DARK_MODE_OVERRIDES = {
+  id: "bw_dark",
+  bgPrimary: "#0a0a0a",
+  bgSecondary: "#141414",
+  bgCard: "#141414",
+  textPrimary: "#f5f5f5",
+  textSoft: "#a0a0a0",
+  textMuted: "#a0a0a0",
+  sage: "#ffffff",
+  sageDark: "#ffffff",
+  sageLight: "#ffffff",
+  amber: "#ffffff",
+  amberLight: "#ffffff",
+  terra: "#ffffff",
+  accent: "#ffffff",
+  accentAlt: "#ffffff",
+  border: "#2a2a2a",
+  navBg: "#0a0a0a",
+  buttonText: "#0a0a0a",
+};
+
 // Themes available in settings (exclude neutral — it's only for pre-onboarding)
 const CUSTOMIZABLE_THEMES = ["warm","masculine","navy","forest","charcoal","slate","obsidian"];
 
@@ -1299,8 +1320,10 @@ function LandingPage({ onEnter, C, font }) {
     { icon: "🎨", title: "Fully Customizable", desc: "Colors, tone, font, faith level — make Selah feel like yours from the first session." },
   ];
 
+  const btnText = C.buttonText || "#fff";
+
   return (
-    <div ref={containerRef} style={{ height:"100vh", overflowY:"auto", background:"#F7F7F5",
+    <div ref={containerRef} style={{ height:"100vh", overflowY:"auto", background:C.bgPrimary,
       fontFamily:"'Georgia','Times New Roman',serif",
       scrollBehavior:"smooth", scrollSnapType:"y proximity" }}>
 
@@ -1312,9 +1335,9 @@ function LandingPage({ onEnter, C, font }) {
 
         {/* Ambient */}
         <div style={{ position:"absolute", top:"-120px", left:"-100px", width:"500px", height:"500px",
-          background:"radial-gradient(circle, #B3C4AE20 0%, transparent 70%)", pointerEvents:"none" }}/>
+          background:`radial-gradient(circle, ${C.sage}20 0%, transparent 70%)`, pointerEvents:"none" }}/>
         <div style={{ position:"absolute", bottom:"-80px", right:"-80px", width:"400px", height:"400px",
-          background:"radial-gradient(circle, #D4CBBA18 0%, transparent 70%)", pointerEvents:"none" }}/>
+          background:`radial-gradient(circle, ${C.amber}18 0%, transparent 70%)`, pointerEvents:"none" }}/>
         <div style={{ position:"absolute", inset:0, pointerEvents:"none",
           backgroundImage:`url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E")`,
           opacity:0.6 }}/>
@@ -1323,23 +1346,23 @@ function LandingPage({ onEnter, C, font }) {
           opacity:vis?1:0, transform:vis?"translateY(0)":"translateY(20px)",
           transition:"all 1s ease" }}>
 
-          <WaveLogo size={42} color="#8FA38A"/>
+          <WaveLogo size={42} color={C.sage}/>
 
           <div style={{ display:"flex", alignItems:"center", justifyContent:"center",
             gap:"10px", margin:"20px 0" }}>
-            <div style={{ width:"40px", height:"1px", background:"#8FA38A", opacity:0.4 }}/>
-            <span style={{ color:"#9E9E98", fontSize:"10px", letterSpacing:"5px",
+            <div style={{ width:"40px", height:"1px", background:C.sage, opacity:0.4 }}/>
+            <span style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"5px",
               textTransform:"uppercase", fontStyle:"italic" }}>PAUSE WITH GOD</span>
-            <div style={{ width:"40px", height:"1px", background:"#8FA38A", opacity:0.4 }}/>
+            <div style={{ width:"40px", height:"1px", background:C.sage, opacity:0.4 }}/>
           </div>
 
-          <h1 style={{ color:"#2C2C2A", fontSize:"clamp(28px,7vw,48px)",
+          <h1 style={{ color:C.textPrimary, fontSize:"clamp(28px,7vw,48px)",
             fontWeight:"normal", margin:"0 0 20px", lineHeight:"1.3",
             letterSpacing:"-0.01em" }}>
             Where God meets you in your hardest moments.
           </h1>
 
-          <p style={{ color:"#6B6B66", fontSize:"clamp(14px,3vw,17px)", fontStyle:"italic",
+          <p style={{ color:C.textSoft, fontSize:"clamp(14px,3vw,17px)", fontStyle:"italic",
             lineHeight:"2", margin:"0 0 40px", maxWidth:"460px", marginLeft:"auto", marginRight:"auto" }}>
             Silence the noise in your head.
             <br /><br />
@@ -1349,18 +1372,18 @@ function LandingPage({ onEnter, C, font }) {
           </p>
 
           <button onClick={onEnter} style={{
-            background:"#8FA38A", border:"none", borderRadius:"3px",
-            color:"#fff", fontSize:"12px", letterSpacing:"4px", textTransform:"uppercase",
+            background:C.accent, border:"none", borderRadius:"3px",
+            color:btnText, fontSize:"12px", letterSpacing:"4px", textTransform:"uppercase",
             padding:"20px 52px", cursor:"pointer",
             fontFamily:"'Georgia','Times New Roman',serif", fontStyle:"italic",
-            boxShadow:"0 4px 20px rgba(143,163,138,0.35)",
+            boxShadow:`0 4px 20px ${C.accent}55`,
             transition:"all 0.3s ease" }}
-            onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 8px 30px rgba(143,163,138,0.45)";}}
-            onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 4px 20px rgba(143,163,138,0.35)";}}>
+            onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow=`0 8px 30px ${C.accent}66`;}}
+            onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow=`0 4px 20px ${C.accent}55`;}}>
             ENTER SELAH
           </button>
 
-          <p style={{ color:"#9E9E98", fontSize:"12px", fontStyle:"italic", margin:"16px 0 0" }}>
+          <p style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic", margin:"16px 0 0" }}>
             Free to start · No account required · Private & encrypted
           </p>
         </div>
@@ -1369,21 +1392,21 @@ function LandingPage({ onEnter, C, font }) {
         <div style={{ position:"absolute", bottom:"32px",
           opacity: scrollY > 50 ? 0 : 0.6, transition:"opacity 0.4s ease" }}>
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:"6px" }}>
-            <span style={{ color:"#9E9E98", fontSize:"9px", letterSpacing:"3px",
+            <span style={{ color:C.textMuted, fontSize:"9px", letterSpacing:"3px",
               textTransform:"uppercase", fontStyle:"italic" }}>Learn more</span>
-            <span style={{ color:"#9E9E98", fontSize:"16px",
+            <span style={{ color:C.textMuted, fontSize:"16px",
               animation:"bobDown 2s ease-in-out infinite" }}>↓</span>
           </div>
         </div>
       </div>
 
       {/* ── WHO IT'S FOR ── */}
-      <div style={{ padding:"80px 24px", background:"#EEEEEB",
+      <div style={{ padding:"80px 24px", background:C.bgSecondary,
         scrollSnapAlign:"start" }}>
         <div style={{ maxWidth:"560px", margin:"0 auto", textAlign:"center" }}>
-          <span style={{ color:"#8FA38A", fontSize:"10px", letterSpacing:"4px",
+          <span style={{ color:C.sage, fontSize:"10px", letterSpacing:"4px",
             textTransform:"uppercase", fontStyle:"italic" }}>Who Selah Is For</span>
-          <h2 style={{ color:"#2C2C2A", fontSize:"clamp(22px,5vw,32px)",
+          <h2 style={{ color:C.textPrimary, fontSize:"clamp(22px,5vw,32px)",
             fontWeight:"normal", margin:"16px 0 20px", lineHeight:"1.4" }}>
             For the ones who carry things they can't say out loud.
           </h2>
@@ -1397,10 +1420,10 @@ function LandingPage({ onEnter, C, font }) {
               "You just need one place where you don't have to perform.",
             ].map((line, i) => (
               <div key={i} style={{ display:"flex", gap:"12px", alignItems:"flex-start",
-                padding:"12px 16px", background:"#F7F7F5", borderRadius:"8px" }}>
+                padding:"12px 16px", background:C.bgPrimary, borderRadius:"8px" }}>
                 <div style={{ width:"5px", height:"5px", borderRadius:"50%",
-                  background:"#8FA38A", marginTop:"8px", flexShrink:0 }}/>
-                <p style={{ color:"#6B6B66", fontSize:"14px", fontStyle:"italic",
+                  background:C.sage, marginTop:"8px", flexShrink:0 }}/>
+                <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic",
                   lineHeight:"1.8", margin:0 }}>{line}</p>
               </div>
             ))}
@@ -1409,25 +1432,25 @@ function LandingPage({ onEnter, C, font }) {
       </div>
 
       {/* ── FEATURES ── */}
-      <div style={{ padding:"80px 24px", background:"#F7F7F5",
+      <div style={{ padding:"80px 24px", background:C.bgPrimary,
         scrollSnapAlign:"start" }}>
         <div style={{ maxWidth:"560px", margin:"0 auto" }}>
           <div style={{ textAlign:"center", marginBottom:"40px" }}>
-            <span style={{ color:"#B0A790", fontSize:"10px", letterSpacing:"4px",
+            <span style={{ color:C.accentAlt, fontSize:"10px", letterSpacing:"4px",
               textTransform:"uppercase", fontStyle:"italic" }}>What's Inside</span>
-            <h2 style={{ color:"#2C2C2A", fontSize:"clamp(22px,5vw,32px)",
+            <h2 style={{ color:C.textPrimary, fontSize:"clamp(22px,5vw,32px)",
               fontWeight:"normal", margin:"16px 0 0", lineHeight:"1.4" }}>
               Tools that meet you where you are.
             </h2>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px" }}>
             {FEATURES.map((f, i) => (
-              <div key={i} style={{ background:"#EEEEEB", borderRadius:"10px",
-                padding:"20px 16px", border:"1px solid #DDDDD8" }}>
+              <div key={i} style={{ background:C.bgSecondary, borderRadius:"10px",
+                padding:"20px 16px", border:`1px solid ${C.border}` }}>
                 <span style={{ fontSize:"24px", display:"block", marginBottom:"10px" }}>{f.icon}</span>
-                <p style={{ color:"#2C2C2A", fontSize:"14px", fontWeight:"bold",
+                <p style={{ color:C.textPrimary, fontSize:"14px", fontWeight:"bold",
                   fontFamily:"'Georgia','Times New Roman',serif", margin:"0 0 6px" }}>{f.title}</p>
-                <p style={{ color:"#6B6B66", fontSize:"12px", fontStyle:"italic",
+                <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
                   lineHeight:"1.7", margin:0 }}>{f.desc}</p>
               </div>
             ))}
@@ -1436,12 +1459,12 @@ function LandingPage({ onEnter, C, font }) {
       </div>
 
       {/* ── TESTIMONIALS ── */}
-      <div style={{ padding:"80px 24px", background:"#2C2C2A",
+      <div style={{ padding:"80px 24px", background:C.bgSecondary,
         scrollSnapAlign:"start" }}>
         <div style={{ maxWidth:"560px", margin:"0 auto", textAlign:"center" }}>
-          <span style={{ color:"#8FA38A", fontSize:"10px", letterSpacing:"4px",
+          <span style={{ color:C.sage, fontSize:"10px", letterSpacing:"4px",
             textTransform:"uppercase", fontStyle:"italic" }}>Voices</span>
-          <h2 style={{ color:"#F7F7F5", fontSize:"clamp(22px,5vw,32px)",
+          <h2 style={{ color:C.textPrimary, fontSize:"clamp(22px,5vw,32px)",
             fontWeight:"normal", margin:"16px 0 32px", lineHeight:"1.4" }}>
             What people are saying.
           </h2>
@@ -1450,11 +1473,11 @@ function LandingPage({ onEnter, C, font }) {
               <div key={i} style={{ background:"rgba(255,255,255,0.06)", borderRadius:"10px",
                 padding:"24px 20px", border:"1px solid rgba(255,255,255,0.08)",
                 textAlign:"left" }}>
-                <p style={{ color:"rgba(247,247,245,0.9)", fontSize:"15px", fontStyle:"italic",
+                <p style={{ color:C.textPrimary, fontSize:"15px", fontStyle:"italic",
                   lineHeight:"1.9", margin:"0 0 12px" }}>"{t.text}"</p>
                 <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
-                  <div style={{ width:"4px", height:"4px", borderRadius:"50%", background:"#8FA38A" }}/>
-                  <span style={{ color:"#8FA38A", fontSize:"9px", letterSpacing:"2px",
+                  <div style={{ width:"4px", height:"4px", borderRadius:"50%", background:C.sage }}/>
+                  <span style={{ color:C.sage, fontSize:"9px", letterSpacing:"2px",
                     textTransform:"uppercase", fontStyle:"italic" }}>{t.tag}</span>
                 </div>
               </div>
@@ -1464,16 +1487,16 @@ function LandingPage({ onEnter, C, font }) {
       </div>
 
       {/* ── NOT THERAPY ── */}
-      <div style={{ padding:"80px 24px", background:"#F7F7F5",
+      <div style={{ padding:"80px 24px", background:C.bgPrimary,
         scrollSnapAlign:"start" }}>
         <div style={{ maxWidth:"480px", margin:"0 auto", textAlign:"center" }}>
-          <span style={{ color:"#9A8E80", fontSize:"10px", letterSpacing:"4px",
+          <span style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"4px",
             textTransform:"uppercase", fontStyle:"italic" }}>Important</span>
-          <h2 style={{ color:"#2C2C2A", fontSize:"clamp(20px,5vw,28px)",
+          <h2 style={{ color:C.textPrimary, fontSize:"clamp(20px,5vw,28px)",
             fontWeight:"normal", margin:"16px 0 16px", lineHeight:"1.4" }}>
             Selah is not therapy.
           </h2>
-          <p style={{ color:"#6B6B66", fontSize:"14px", fontStyle:"italic",
+          <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic",
             lineHeight:"2", margin:"0 0 24px" }}>
             It's a guided reflection tool — a companion for thinking clearly, not a replacement for professional care.
             Selah does not provide therapy, counseling, medical advice, diagnosis, or crisis intervention.
@@ -1482,10 +1505,10 @@ function LandingPage({ onEnter, C, font }) {
             By using Selah, you acknowledge that its creators, developers, and affiliates assume no liability
             for any actions, decisions, or outcomes resulting from your use of this application.
           </p>
-          <div style={{ background:"#EEEEEB", borderRadius:"10px", padding:"16px 20px",
-            border:"1px solid #DDDDD8", display:"inline-flex", alignItems:"center", gap:"10px" }}>
+          <div style={{ background:C.bgSecondary, borderRadius:"10px", padding:"16px 20px",
+            border:`1px solid ${C.border}`, display:"inline-flex", alignItems:"center", gap:"10px" }}>
             <span style={{ fontSize:"14px" }}>🤍</span>
-            <span style={{ color:"#9A8E80", fontSize:"12px", fontStyle:"italic" }}>
+            <span style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic" }}>
               988 Suicide & Crisis Lifeline · Always accessible inside Selah
             </span>
           </div>
@@ -1493,67 +1516,67 @@ function LandingPage({ onEnter, C, font }) {
       </div>
 
       {/* ── FOUNDER ── */}
-      <div style={{ padding:"80px 24px", background:"#EEEEEB",
+      <div style={{ padding:"80px 24px", background:C.bgSecondary,
         scrollSnapAlign:"start" }}>
         <div style={{ maxWidth:"480px", margin:"0 auto", textAlign:"center" }}>
-          <WaveLogo size={32} color="#8FA38A"/>
-          <p style={{ color:"#B0A790", fontSize:"10px", letterSpacing:"4px",
+          <WaveLogo size={32} color={C.sage}/>
+          <p style={{ color:C.accentAlt, fontSize:"10px", letterSpacing:"4px",
             textTransform:"uppercase", fontStyle:"italic", margin:"16px 0 12px" }}>From the Founder</p>
-          <p style={{ color:"#6B6B66", fontSize:"15px", fontStyle:"italic",
+          <p style={{ color:C.textSoft, fontSize:"15px", fontStyle:"italic",
             lineHeight:"2", margin:"0 0 12px" }}>
             I'm not a preacher. I'm not perfect. I built Selah because I know what it feels like to be desperate and not know where to turn — and I know that God is the only one who never runs out of answers.
           </p>
-          <p style={{ color:"#6B6B66", fontSize:"14px", fontStyle:"italic",
+          <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic",
             lineHeight:"2", margin:"0 0 8px" }}>
             This app isn't about religion. It's about that moment when everything else fails and you need somewhere real to go.
           </p>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"8px", margin:"16px 0" }}>
-            <div style={{ width:"20px", height:"1px", background:"#8FA38A", opacity:0.5 }}/>
-            <span style={{ color:"#9E9E98", fontSize:"10px", letterSpacing:"2px",
+            <div style={{ width:"20px", height:"1px", background:C.sage, opacity:0.5 }}/>
+            <span style={{ color:C.textMuted, fontSize:"10px", letterSpacing:"2px",
               textTransform:"uppercase", fontStyle:"italic" }}>ZS</span>
-            <div style={{ width:"20px", height:"1px", background:"#8FA38A", opacity:0.5 }}/>
+            <div style={{ width:"20px", height:"1px", background:C.sage, opacity:0.5 }}/>
           </div>
         </div>
       </div>
 
       {/* ── FINAL CTA ── */}
-      <div style={{ padding:"80px 24px 100px", background:"#2C2C2A", textAlign:"center",
+      <div style={{ padding:"80px 24px 100px", background:C.bgSecondary, textAlign:"center",
         scrollSnapAlign:"start" }}>
         <div style={{ maxWidth:"480px", margin:"0 auto" }}>
-          <WaveLogo size={36} color="#8FA38A"/>
-          <h2 style={{ color:"#F7F7F5", fontSize:"clamp(22px,5vw,32px)",
+          <WaveLogo size={36} color={C.sage}/>
+          <h2 style={{ color:C.textPrimary, fontSize:"clamp(22px,5vw,32px)",
             fontWeight:"normal", margin:"20px 0 12px", lineHeight:"1.4" }}>
             Whatever brought you here —<br/>you're here.
           </h2>
-          <p style={{ color:"rgba(247,247,245,0.6)", fontSize:"14px", fontStyle:"italic",
+          <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic",
             lineHeight:"1.9", margin:"0 0 32px" }}>
             That took something. Don't waste it.
           </p>
           <button onClick={onEnter} style={{
-            background:"#8FA38A", border:"none", borderRadius:"3px",
-            color:"#fff", fontSize:"12px", letterSpacing:"4px", textTransform:"uppercase",
+            background:C.accent, border:"none", borderRadius:"3px",
+            color:btnText, fontSize:"12px", letterSpacing:"4px", textTransform:"uppercase",
             padding:"20px 52px", cursor:"pointer",
             fontFamily:"'Georgia','Times New Roman',serif", fontStyle:"italic",
-            boxShadow:"0 4px 24px rgba(143,163,138,0.4)",
+            boxShadow:`0 4px 24px ${C.accent}66`,
             transition:"all 0.3s ease" }}
             onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";}}
             onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";}}>
             Enter Selah
           </button>
-          <p style={{ color:"rgba(247,247,245,0.35)", fontSize:"11px", fontStyle:"italic",
+          <p style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic",
             margin:"20px 0 0", lineHeight:"1.8" }}>
             Free to start · No account required · End-to-end encrypted
           </p>
-          <div style={{ marginTop:"32px", borderTop:"1px solid rgba(255,255,255,0.08)",
+          <div style={{ marginTop:"32px", borderTop:`1px solid ${C.border}`,
             paddingTop:"20px" }}>
-            <p style={{ color:"rgba(247,247,245,0.4)", fontSize:"11px", fontStyle:"italic",
+            <p style={{ color:C.textSoft, fontSize:"11px", fontStyle:"italic",
               lineHeight:"1.9", margin:0 }}>
               "Be still and know that I am God."
             </p>
-            <p style={{ color:"rgba(143,163,138,0.5)", fontSize:"9px", letterSpacing:"2px",
+            <p style={{ color:C.sage, fontSize:"9px", letterSpacing:"2px",
               textTransform:"uppercase", margin:"4px 0 0" }}>Psalm 46:10</p>
           </div>
-          <p style={{ color:"rgba(247,247,245,0.3)", fontSize:"9px", fontStyle:"italic",
+          <p style={{ color:C.textMuted, fontSize:"9px", fontStyle:"italic",
             lineHeight:"1.8", margin:"24px auto 0", maxWidth:"400px" }}>
             Selah is not therapy, counseling, or medical advice. Not a substitute for professional mental health care.
             If you are in crisis, call 988 or 911. By using Selah, you agree its creators assume no liability for outcomes from use.
@@ -1897,11 +1920,15 @@ function EmailGateScreen({ onVerified, C, font }) {
     setLoading(false);
   };
 
-  const bg = "#F7F7F5";
-  const sage = "#8FA38A";
-  const textDark = "#2C2C2A";
-  const textSoft = "#6B6B66";
-  const textMuted = "#9E9E98";
+  const bg = C.bgPrimary;
+  const sage = C.accent;
+  const textDark = C.textPrimary;
+  const textSoft = C.textSoft;
+  const textMuted = C.textMuted;
+  const cardBg = C.bgSecondary;
+  const inputBg = C.bgCard;
+  const inputBorder = C.border;
+  const btnText = C.buttonText || "#fff";
 
   return (
     <div style={{ minHeight:"100vh", background:bg, display:"flex", flexDirection:"column",
@@ -1912,7 +1939,7 @@ function EmailGateScreen({ onVerified, C, font }) {
       <div style={{ position:"absolute", top:"-100px", left:"-80px", width:"400px", height:"400px",
         background:`radial-gradient(circle, ${sage}18 0%, transparent 70%)`, pointerEvents:"none" }}/>
       <div style={{ position:"absolute", bottom:"-60px", right:"-60px", width:"320px", height:"320px",
-        background:"radial-gradient(circle, #D4CBBA15 0%, transparent 70%)", pointerEvents:"none" }}/>
+        background:`radial-gradient(circle, ${C.amber}15 0%, transparent 70%)`, pointerEvents:"none" }}/>
 
       <div style={{ maxWidth:"400px", width:"100%", opacity:visible?1:0,
         transform:visible?"translateY(0)":"translateY(18px)", transition:"all 0.8s ease" }}>
@@ -1937,8 +1964,8 @@ function EmailGateScreen({ onVerified, C, font }) {
         </div>
 
         {/* Card */}
-        <div style={{ background:"#fff", borderRadius:"14px", padding:"28px 24px",
-          border:"1px solid #E8E4DC", boxShadow:"0 4px 24px rgba(0,0,0,0.06)" }}>
+        <div style={{ background:cardBg, borderRadius:"14px", padding:"28px 24px",
+          border:`1px solid ${C.border}`, boxShadow:"0 4px 24px rgba(0,0,0,0.06)" }}>
 
           {step === "email" ? (
             <>
@@ -1952,8 +1979,8 @@ function EmailGateScreen({ onVerified, C, font }) {
                 onKeyDown={e=>e.key==="Enter"&&sendCode()}
                 placeholder="you@example.com"
                 style={{ width:"100%", padding:"12px 14px", borderRadius:"8px",
-                  border:`1.5px solid ${error?"#C4726A":"#DDD8CE"}`,
-                  fontSize:"15px", fontFamily:"inherit", background:"#FAFAF8",
+                  border:`1.5px solid ${error?"#C4726A":inputBorder}`,
+                  fontSize:"15px", fontFamily:"inherit", background:inputBg,
                   color:textDark, outline:"none", boxSizing:"border-box",
                   transition:"border 0.2s" }}
               />
@@ -1966,7 +1993,7 @@ function EmailGateScreen({ onVerified, C, font }) {
               {error && <p style={{ color:"#C4726A", fontSize:"12px", margin:"8px 0 0" }}>{error}</p>}
               <button onClick={sendCode} disabled={loading}
                 style={{ width:"100%", marginTop:"16px", padding:"13px",
-                  background:loading?`${sage}88`:sage, color:"#fff", border:"none",
+                  background:loading?`${sage}88`:sage, color:btnText, border:"none",
                   borderRadius:"8px", fontSize:"14px", letterSpacing:"1px",
                   fontFamily:"inherit", cursor:loading?"default":"pointer",
                   transition:"background 0.2s" }}>
@@ -1985,15 +2012,15 @@ function EmailGateScreen({ onVerified, C, font }) {
                 onKeyDown={e=>e.key==="Enter"&&verifyCode()}
                 placeholder="• • • • • •"
                 style={{ width:"100%", padding:"12px 14px", borderRadius:"8px",
-                  border:`1.5px solid ${error?"#C4726A":"#DDD8CE"}`,
+                  border:`1.5px solid ${error?"#C4726A":inputBorder}`,
                   fontSize:"24px", letterSpacing:"10px", textAlign:"center",
-                  fontFamily:"monospace", background:"#FAFAF8",
+                  fontFamily:"monospace", background:inputBg,
                   color:textDark, outline:"none", boxSizing:"border-box" }}
               />
               {error && <p style={{ color:"#C4726A", fontSize:"12px", margin:"8px 0 0" }}>{error}</p>}
               <button onClick={verifyCode} disabled={loading}
                 style={{ width:"100%", marginTop:"16px", padding:"13px",
-                  background:loading?`${sage}88`:sage, color:"#fff", border:"none",
+                  background:loading?`${sage}88`:sage, color:btnText, border:"none",
                   borderRadius:"8px", fontSize:"14px", letterSpacing:"1px",
                   fontFamily:"inherit", cursor:loading?"default":"pointer",
                   transition:"background 0.2s" }}>
@@ -13218,7 +13245,7 @@ function FeatureGuideScreen({ C, font, setScreen }) {
 // ═══════════════════════════════════════════════════════
 // SETTINGS SCREEN
 // ═══════════════════════════════════════════════════════
-function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId,
+function SettingsScreen({ C, font, setScreen, theme, setTheme, darkMode, setDarkMode, fontId, setFontId,
   faithLevel, setFaithLevel,
   sharingEnabled, setSharingEnabled, pushEnabled, setPushEnabled,
   pushGuidedPrayerEnabled, setPushGuidedPrayerEnabled, pushGuidedPrayerHour, setPushGuidedPrayerHour,
@@ -13289,7 +13316,7 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId
     <div onClick={()=>onChange(!v)} style={{ width:"44px",height:"24px",borderRadius:"12px",
       background:v?C.accent:C.bgCard,border:`1px solid ${v?C.accent:C.border}`,
       position:"relative",cursor:"pointer",transition:"all 0.3s ease",flexShrink:0 }}>
-      <div style={{ width:"18px",height:"18px",borderRadius:"50%",background:"#fff",
+      <div style={{ width:"18px",height:"18px",borderRadius:"50%",background:v?(C.buttonText || "#fff"):"#fff",
         position:"absolute",top:"2px",left:v?"22px":"2px",
         transition:"left 0.3s ease",boxShadow:"0 1px 4px rgba(0,0,0,0.15)" }}/>
     </div>
@@ -13628,6 +13655,23 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, fontId, setFontId
         {/* ── DISPLAY TAB ── */}
         {tab==="display"&&(
           <div>
+            <Label text="Appearance" color={C.sage} font={font}/>
+            <div style={{ background:C.bgSecondary,borderRadius:"10px",
+              overflow:"hidden",border:`1px solid ${C.border}`,marginBottom:"20px" }}>
+              <div style={{ display:"flex",alignItems:"center",gap:"14px",
+                padding:"16px 18px" }}>
+                <span style={{ fontSize:"18px",flexShrink:0 }}>◐</span>
+                <div style={{ flex:1 }}>
+                  <p style={{ color:C.textPrimary,fontSize:"13px",fontFamily:font,
+                    margin:"0 0 2px" }}>Dark Mode</p>
+                  <p style={{ color:C.textMuted,fontSize:"11px",fontStyle:"italic",margin:0 }}>
+                    Switch Selah to a black & white dark appearance.
+                  </p>
+                </div>
+                <Toggle v={darkMode} onChange={setDarkMode}/>
+              </div>
+            </div>
+
             <Label text="Font Style" color={C.amber} font={font}/>
             {(TIER_LEVELS[tier]||0) < TIER_LEVELS.foundation && !(trialDaysLeft > 0) ? (
               <div style={{ background:`${C.amber}08`, border:`1px solid ${C.amber}33`,
@@ -15341,6 +15385,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
   // Comparison rows — clean, no duplicates, drives toward Deep
   const COMPARE_ROWS = [
     { feature:"Daily AI Reflections",         free:"2/day",   foundation:"3/day",     growth:"5/day",      deep:"Unlimited" },
+    { feature:"Dark Mode",                    free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Breathe & Listen, Notebook, Heavy Day", free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Gratitude & Letters to God",   free:"✓",       foundation:"✓",         growth:"✓",          deep:"✓" },
     { feature:"Biblical Reflections",         free:"—",       foundation:"Full — 75+",growth:"Full — 75+", deep:"Full — 75+" },
@@ -16601,6 +16646,7 @@ function SelahAppInner() {
   const [screen, _setScreen]       = useState("home");
   const setScreen = (s) => { trackEvent("feature_tap", { screen: s }); _setScreen(s); };
   const [themeId, setThemeId]     = useState(has("themeId") ? saved.themeId : "neutral");
+  const [darkMode, setDarkMode]   = useState(has("darkMode") ? !!saved.darkMode : false);
   const [fontId, setFontId]       = useState(has("fontId") ? saved.fontId : "serif");
   const [faithLevel, setFaithLevel] = useState(has("faithLevel") ? saved.faithLevel : 2);
   const [userName, setUserName]   = useState(has("userName") ? saved.userName : "");
@@ -16896,7 +16942,7 @@ useEffect(() => {
   useEffect(() => {
     saveToStorage({
       appScreen: appScreen === "main" ? "main" : appScreen,
-      themeId, fontId, faithLevel, userName, tier, trialStart, steadyDays, sessionCount,
+      themeId, darkMode, fontId, faithLevel, userName, tier, trialStart, steadyDays, sessionCount,
       sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour,
       dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
       journalEntries, moodHistory, lastVisit: Date.now(),
@@ -16908,7 +16954,7 @@ useEffect(() => {
     if (authToken) {
       const syncData = {
         appScreen: appScreen === "main" ? "main" : appScreen,
-        themeId, fontId, faithLevel, userName, tier, trialStart, steadyDays, sessionCount,
+        themeId, darkMode, fontId, faithLevel, userName, tier, trialStart, steadyDays, sessionCount,
         sharingEnabled, pushEnabled, dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
         journalEntries, moodHistory, lastVisit: Date.now(),
         feedbackEntries, lastFeedbackPrompt,
@@ -16938,7 +16984,7 @@ useEffect(() => {
           setSyncError("Couldn’t reach the server. Check your connection.");
         });
     }
-  }, [appScreen, themeId, fontId, faithLevel, userName, tier, trialStart, steadyDays,
+  }, [appScreen, themeId, darkMode, fontId, faithLevel, userName, tier, trialStart, steadyDays,
       sessionCount, sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour,
       dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers,
       isFirstVisit, journalEntries, moodHistory, feedbackEntries, lastFeedbackPrompt,
@@ -17119,7 +17165,7 @@ useEffect(() => {
     trackEvent("mood_logged", { mood: moodVal, energy });
   };
 
-  const C   = THEMES[themeId].C;
+  const C   = darkMode ? { ...THEMES[themeId].C, ...DARK_MODE_OVERRIDES } : THEMES[themeId].C;
   const font = FONTS[fontId];
 
   // ── LITURGICAL SEASON ENGINE ──
@@ -17496,6 +17542,7 @@ useEffect(() => {
       case "settings": return (
         <SettingsScreen C={SC} font={font} setScreen={setScreen}
           theme={themeId} setTheme={setThemeId}
+          darkMode={darkMode} setDarkMode={setDarkMode}
           fontId={fontId} setFontId={setFontId}
           faithLevel={faithLevel} setFaithLevel={setFaithLevel}
           sharingEnabled={sharingEnabled} setSharingEnabled={setSharingEnabled}
