@@ -4,6 +4,19 @@
 
 import webpush from "web-push";
 
+function localHourFromTzOffset(tzOffsetMinutes) {
+  const now = new Date();
+  const utcTotalMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const localTotalMin = utcTotalMin - Number(tzOffsetMinutes || 0);
+  return Math.floor((((localTotalMin % 1440) + 1440) % 1440) / 60);
+}
+
+function normalizeHour(value, fallback = 8) {
+  const n = parseInt(String(value), 10);
+  if (Number.isNaN(n) || n < 0 || n > 23) return fallback;
+  return n;
+}
+
 export default async function handler(req, res) {
   // Verify cron secret
   if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -51,11 +64,12 @@ export default async function handler(req, res) {
         try {
           const { result: data } = await redis(["GET", key]);
           if (!data) { failed++; continue; }
-          const { subscription } = JSON.parse(data);
+          const parsed = JSON.parse(data);
+          const { subscription } = parsed;
 
           // Check if this user was active today
           const { result: activeKeys } = await redis(["SMEMBERS", `analytics:users:${today}`]);
-          const subEmail = JSON.parse(data).email || "";
+          const subEmail = parsed.email || "";
 
           // If they were active today, skip — they don't need a nudge
           if (activeKeys && activeKeys.includes(subEmail)) continue;
@@ -205,12 +219,36 @@ export default async function handler(req, res) {
 
       let sent = 0;
       let failed = 0;
+      let skipped = 0;
 
       for (const key of keys) {
         try {
           const { result: data } = await redis(["GET", key]);
           if (!data) { failed++; continue; }
-          const { subscription } = JSON.parse(data);
+          const parsed = JSON.parse(data);
+          const { subscription } = parsed;
+          if (!subscription) { failed++; continue; }
+
+          const tzOffsetMinutes = Number(parsed.tzOffsetMinutes ?? 0);
+          const localHour = localHourFromTzOffset(tzOffsetMinutes);
+          let preferredHour = normalizeHour(parsed.dailyReminderHour, 8);
+
+          const email = String(parsed.email || "").trim().toLowerCase();
+          if (email.includes("@")) {
+            try {
+              const { result: userRaw } = await redis(["GET", `selah:user:${email}`]);
+              if (userRaw) {
+                const userData = JSON.parse(userRaw);
+                preferredHour = normalizeHour(userData.dailyReminderHour, preferredHour);
+              }
+            } catch {}
+          }
+
+          if (localHour !== preferredHour) {
+            skipped++;
+            continue;
+          }
+
           await webpush.sendNotification(subscription, payload);
           sent++;
         } catch (e) {
@@ -222,7 +260,7 @@ export default async function handler(req, res) {
         }
       }
 
-      return res.status(200).json({ action: "morning", sent, failed, total: keys.length });
+      return res.status(200).json({ action: "morning", sent, failed, skipped, total: keys.length });
     }
   } catch (e) {
     console.error("Push error:", e);

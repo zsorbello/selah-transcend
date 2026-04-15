@@ -20,6 +20,33 @@ export default async function handler(req, res) {
     return (await r.json()).result;
   }
 
+  const parseJsonSafe = (raw) => {
+    try { return JSON.parse(raw); } catch { return null; }
+  };
+
+  const parseTrialRecord = (raw, key) => {
+    if (raw == null) return null;
+    const keyEmail = String(key || "").startsWith("selah:trial:") ? String(key).slice("selah:trial:".length).toLowerCase() : "";
+    const asNumber = Number(raw);
+    if (Number.isFinite(asNumber) && asNumber > 0) {
+      return { email: keyEmail, trialStart: asNumber, reminded: false, name: "friend", format: "timestamp" };
+    }
+    const parsed = parseJsonSafe(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const trialStart = Number(parsed.trialStart || parsed.startedAt || parsed.createdAt || 0);
+    if (!Number.isFinite(trialStart) || trialStart <= 0) return null;
+    const email = String(parsed.email || keyEmail || "").toLowerCase();
+    if (!email.includes("@")) return null;
+    return {
+      email,
+      trialStart,
+      reminded: !!parsed.reminded,
+      name: parsed.name || "friend",
+      format: "json",
+      rawObj: parsed,
+    };
+  };
+
   const action = req.query.action || req.body?.action;
 
   // ═══════════════════════════════════════════════════════
@@ -130,27 +157,28 @@ export default async function handler(req, res) {
         try {
           const raw = await redis("GET", key);
           if (!raw) continue;
-          const data = JSON.parse(raw);
+          const rec = parseTrialRecord(raw, key);
+          if (!rec) continue;
 
-          const elapsed = now - data.trialStart;
+          const elapsed = now - rec.trialStart;
           if (elapsed < fiveDaysMs || elapsed > sixDaysMs) continue;
-          if (data.reminded) continue;
+          if (rec.reminded) continue;
 
-          const subKey = `stripe:sub:${data.email.toLowerCase()}`;
+          const subKey = `stripe:sub:${rec.email.toLowerCase()}`;
           const sub = await redis("GET", subKey);
           if (sub) {
             const subData = JSON.parse(sub);
             if (subData.tier && subData.tier !== "free") continue;
           }
 
-          const name = data.name || "friend";
+          const name = rec.name || "friend";
 
           await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: { Authorization: `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
             body: JSON.stringify({
               from: "Selah <noreply@selah-transcend.com>",
-              to: data.email,
+              to: rec.email,
               subject: `${name}, your Selah trial ends in 2 days`,
               html: `
                 <div style="font-family:Georgia,serif;max-width:480px;margin:0 auto;padding:40px 24px;color:#2C2C2A;background:#F5F1E8;">
@@ -208,8 +236,13 @@ export default async function handler(req, res) {
             })
           });
 
-          data.reminded = true;
-          await redis("SET", key, JSON.stringify(data), "EX", 604800);
+          const next = rec.rawObj && typeof rec.rawObj === "object" ? { ...rec.rawObj } : {
+            email: rec.email,
+            trialStart: rec.trialStart,
+            name: rec.name || "friend",
+          };
+          next.reminded = true;
+          await redis("SET", key, JSON.stringify(next), "EX", 1209600);
           sent++;
         } catch (err) {
           console.error(`Error processing ${key}:`, err.message);
@@ -247,14 +280,17 @@ export default async function handler(req, res) {
         try {
           const raw = await redis("GET", key);
           if (!raw) continue;
-          const data = JSON.parse(raw);
+          const data = parseJsonSafe(raw);
+          if (!data || typeof data !== "object") continue;
+          const email = String(data.email || "").toLowerCase();
+          if (!email.includes("@")) continue;
 
-          const elapsed = now - data.time;
+          const elapsed = now - Number(data.time || 0);
           // Only nudge if inactive 5-10 days (not brand new, not ancient)
           if (elapsed < fiveDaysMs || elapsed > tenDaysMs) continue;
 
           // Don't nudge if already nudged
-          const nudgeKey = `selah:nudged:${data.email.toLowerCase()}`;
+          const nudgeKey = `selah:nudged:${email}`;
           const alreadyNudged = await redis("GET", nudgeKey);
           if (alreadyNudged) continue;
 
@@ -265,7 +301,7 @@ export default async function handler(req, res) {
             headers: { Authorization: `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
             body: JSON.stringify({
               from: "Selah <noreply@selah-transcend.com>",
-              to: data.email,
+              to: email,
               subject: `${name}, don't let the work stop`,
               html: `
                 <div style="font-family:Georgia,serif;max-width:480px;margin:0 auto;padding:40px 24px;color:#2C2C2A;background:#F5F1E8;">
@@ -329,5 +365,88 @@ export default async function handler(req, res) {
     }
   }
 
-  return res.status(400).json({ error: "Missing or invalid action. Use ?action=welcome, ?action=trial-reminder, or ?action=inactive-nudge" });
+  // ═══════════════════════════════════════════════════════
+  // DOWNTIME ALERT → admin (cron calls when /health check fails)
+  // POST or GET with ?action=downtime-alert & Authorization: Bearer CRON_SECRET
+  // ═══════════════════════════════════════════════════════
+  if (action === "downtime-alert") {
+    const secret = req.headers["authorization"]?.replace("Bearer ", "") || req.query.secret;
+    if (secret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (req.method !== "POST" && req.method !== "GET") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "sorbello.zak@gmail.com";
+    const payload = typeof req.body === "object" && req.body ? req.body : {};
+    const checkedUrl = payload.checkedUrl || payload.url || "https://selah-transcend.com/health";
+    const note = payload.message || payload.note || "External health check reported a failure (e.g. non-200 from GET /health).";
+
+    try {
+      const cooldownKey = "selah:downtime-email:cooldown";
+      const inCooldown = await redis("GET", cooldownKey);
+      if (inCooldown) {
+        return res.status(200).json({ ok: true, sent: false, skipped: true, reason: "cooldown_active" });
+      }
+
+      const sentAt = new Date().toISOString();
+
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: "Selah <noreply@selah-transcend.com>",
+          to: ADMIN_EMAIL,
+          subject: "⚠️ Selah — Health check failed",
+          html: `
+            <div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:40px 24px;color:#2C2C2A;background:#F5F1E8;">
+              <div style="text-align:center;margin-bottom:28px;">
+                <div style="font-size:28px;margin-bottom:12px;">⚠️</div>
+                <h1 style="font-size:20px;font-weight:normal;color:#8B4A3A;margin:0 0 8px;">
+                  Downtime alert
+                </h1>
+                <p style="color:#6B6B66;font-size:13px;font-style:italic;line-height:1.8;margin:0;">
+                  A scheduled monitor could not confirm that Selah is healthy.
+                </p>
+              </div>
+
+              <div style="background:#fff;border-radius:12px;padding:22px;border:1px solid #E8E4DC;margin-bottom:24px;">
+                <p style="color:#A8B5A2;font-size:10px;letter-spacing:2px;text-transform:uppercase;margin:0 0 8px;">What we know</p>
+                <p style="color:#2C2C2A;font-size:14px;line-height:1.85;margin:0 0 12px;">
+                  ${note.replace(/</g, "&lt;").replace(/>/g, "&gt;")}
+                </p>
+                <p style="color:#6B6B66;font-size:12px;line-height:1.7;margin:0;">
+                  <strong>Checked URL:</strong> ${String(checkedUrl).replace(/</g, "&lt;").replace(/>/g, "&gt;")}<br/>
+                  <strong>Time (UTC):</strong> ${sentAt}
+                </p>
+              </div>
+
+              <div style="background:#FFF8F4;border-radius:10px;padding:16px;border:1px solid #E8D4CC;margin-bottom:24px;">
+                <p style="color:#5A4A42;font-size:12px;line-height:1.75;margin:0;">
+                  <strong>Next steps:</strong> Open Railway logs, verify the service and Redis (Upstash), and confirm <code style="background:#F0EBE3;padding:2px 6px;border-radius:4px;">GET /health</code> returns <code style="background:#F0EBE3;padding:2px 6px;border-radius:4px;">200</code>.
+                  Public status: <a href="https://selah-transcend.com/status" style="color:#4A7FA5;">selah-transcend.com/status</a>
+                </p>
+              </div>
+
+              <p style="color:#9A8E80;font-size:10px;font-style:italic;text-align:center;margin:0;">
+                This email is rate-limited (cooldown) to reduce duplicate alerts. Adjust <code style="font-size:9px;">ADMIN_EMAIL</code> or <code style="font-size:9px;">CRON_SECRET</code> in env as needed.
+              </p>
+            </div>
+          `,
+        }),
+      });
+
+      await redis("SET", cooldownKey, sentAt, "EX", 3600);
+      return res.status(200).json({ ok: true, sent: true, to: ADMIN_EMAIL });
+    } catch (err) {
+      console.error("Downtime alert email error:", err);
+      return res.status(500).json({ error: "Failed to send downtime alert" });
+    }
+  }
+
+  return res.status(400).json({
+    error:
+      "Missing or invalid action. Use ?action=welcome, ?action=trial-reminder, ?action=inactive-nudge, or ?action=downtime-alert",
+  });
 }

@@ -27,6 +27,33 @@ function generateToken() {
   return token;
 }
 
+function normalizeTrialRecord(raw, fallbackEmail, fallbackStart) {
+  const email = String(fallbackEmail || '').toLowerCase();
+  if (raw == null || raw === '') {
+    return {
+      email,
+      name: 'friend',
+      trialStart: Number(fallbackStart || Date.now()),
+      reminded: false,
+    };
+  }
+  const asNum = Number(raw);
+  if (Number.isFinite(asNum) && asNum > 0) {
+    return { email, name: 'friend', trialStart: asNum, reminded: false };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      email: String(parsed.email || email).toLowerCase(),
+      name: parsed.name || 'friend',
+      trialStart: Number(parsed.trialStart || fallbackStart || Date.now()),
+      reminded: !!parsed.reminded,
+    };
+  } catch {
+    return { email, name: 'friend', trialStart: Number(fallbackStart || Date.now()), reminded: false };
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -130,12 +157,16 @@ export default async function handler(req, res) {
       // Server is authoritative — this prevents localStorage clearing abuse.
       const trialKey = `selah:trial:${email.toLowerCase()}`;
       let serverTrialStart = await redis('GET', trialKey);
-      if (!serverTrialStart && req.body.trialStart) {
-        // First login — persist whatever trialStart the client has
-        serverTrialStart = String(req.body.trialStart);
-        await redis('SET', trialKey, serverTrialStart);
-      }
-      const trialStart = serverTrialStart ? parseInt(serverTrialStart, 10) : null;
+      const fallbackStart = Number(req.body.trialStart || Date.now());
+      const trialRecord = normalizeTrialRecord(serverTrialStart, email, fallbackStart);
+      serverTrialStart = trialRecord.trialStart;
+      await redis('SET', trialKey, JSON.stringify(trialRecord), 'EX', 1209600);
+      const trialStart = Number.isFinite(serverTrialStart) ? serverTrialStart : null;
+      await redis('SET', `selah:active:${email.toLowerCase()}`, JSON.stringify({
+        email: email.toLowerCase(),
+        name: req.body?.name || '',
+        time: Date.now(),
+      }), 'EX', 7776000);
       // ────────────────────────────────────────────────────────────────
 
       return res.status(200).json({ success: true, token: sessionToken, email: email.toLowerCase(), trialStart });
@@ -155,7 +186,14 @@ export default async function handler(req, res) {
       // Return trialStart so client can sync to server-authoritative value
       const trialKey = `selah:trial:${userEmail}`;
       const serverTrialStart = await redis('GET', trialKey);
-      const trialStart = serverTrialStart ? parseInt(serverTrialStart, 10) : null;
+      const trialRecord = normalizeTrialRecord(serverTrialStart, userEmail, Date.now());
+      const trialStart = Number.isFinite(trialRecord.trialStart) ? trialRecord.trialStart : null;
+      await redis('SET', trialKey, JSON.stringify(trialRecord), 'EX', 1209600);
+      await redis('SET', `selah:active:${String(userEmail).toLowerCase()}`, JSON.stringify({
+        email: String(userEmail).toLowerCase(),
+        name: '',
+        time: Date.now(),
+      }), 'EX', 7776000);
 
       return res.status(200).json({ success: true, email: userEmail, trialStart });
     }

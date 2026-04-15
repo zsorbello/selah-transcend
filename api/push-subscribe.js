@@ -40,12 +40,53 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'POST') {
-      const { subscription, userId, email } = req.body;
+      const {
+        subscription,
+        userId,
+        email,
+        dailyReminderHour,
+        guidedPrayerEnabled,
+        guidedPrayerHour,
+        eveningPrayerEnabled,
+        eveningPrayerHour,
+        tzOffsetMinutes,
+      } = req.body;
       if (!subscription || !subscription.endpoint) {
         return res.status(400).json({ error: 'Valid subscription required' });
       }
       const key = `push:${hashEndpoint(subscription.endpoint)}`;
-      const data = { subscription, userId: userId || 'anon', email: email || '', createdAt: new Date().toISOString() };
+      let prev = {};
+      try {
+        const raw = await redis('GET', key);
+        if (raw) prev = JSON.parse(raw);
+      } catch (_) {}
+
+      const data = {
+        ...prev,
+        subscription,
+        userId: userId != null ? userId : (prev.userId || 'anon'),
+        email: email != null ? email : (prev.email || ''),
+        createdAt: prev.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      if (dailyReminderHour !== undefined && dailyReminderHour !== null) {
+        const h = parseInt(String(dailyReminderHour), 10);
+        if (!Number.isNaN(h) && h >= 0 && h <= 23) data.dailyReminderHour = h;
+      }
+      if (guidedPrayerEnabled !== undefined) data.guidedPrayerEnabled = !!guidedPrayerEnabled;
+      if (guidedPrayerHour !== undefined && guidedPrayerHour !== null) {
+        const h = parseInt(String(guidedPrayerHour), 10);
+        if (!Number.isNaN(h) && h >= 0 && h <= 23) data.guidedPrayerHour = h;
+      }
+      if (eveningPrayerEnabled !== undefined) data.eveningPrayerEnabled = !!eveningPrayerEnabled;
+      if (eveningPrayerHour !== undefined && eveningPrayerHour !== null) {
+        const h = parseInt(String(eveningPrayerHour), 10);
+        if (!Number.isNaN(h) && h >= 0 && h <= 23) data.eveningPrayerHour = h;
+      }
+      if (tzOffsetMinutes !== undefined && tzOffsetMinutes !== null && !Number.isNaN(Number(tzOffsetMinutes))) {
+        data.tzOffsetMinutes = Number(tzOffsetMinutes);
+      }
+
       await redis('SET', key, JSON.stringify(data), 'EX', 7776000);
       await redis('SADD', 'push:subscribers', key);
       return res.status(200).json({ success: true });

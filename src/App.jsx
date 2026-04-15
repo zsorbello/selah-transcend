@@ -1161,9 +1161,16 @@ function pickWarmCalmVoice() {
   };
   return [...pool].sort((a, b) => rank(b) - rank(a))[0];
 }
+function getAdminTokenFromUrl() {
+  if (typeof window === "undefined") return "";
+  return String(new URLSearchParams(window.location.search).get("admin") || "").trim();
+}
+function isAdminSession() {
+  return !!getAdminTokenFromUrl();
+}
 // Trial users get foundation-level access only (not growth/deep)
 function hasAccess(userTier, requiredTier, isTrialActive) {
-  if (new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04") return true;
+  if (isAdminSession()) return true;
   if (isTrialActive && (TIER_LEVELS[requiredTier]||0) <= TIER_LEVELS.foundation) return true;
   return (TIER_LEVELS[userTier]||0) >= (TIER_LEVELS[requiredTier]||0);
 }
@@ -6868,7 +6875,7 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, showLateNight, s
   const tod = TOD[timeOfDay];
 
   const weekInWordsEligible = useMemo(() => {
-    const isAdmin = new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04";
+    const isAdmin = isAdminSession();
     if ((TIER_LEVELS[tier] || 0) < TIER_LEVELS.growth && !isAdmin) return false;
     const now = new Date();
     const dow = now.getDay();
@@ -6923,7 +6930,7 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, showLateNight, s
   }, [sessionCount, journalEntries, tier, isTrialActive]);
 
   useEffect(()=>{
-    const isAdmin = new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04";
+    const isAdmin = isAdminSession();
     const canAccessGoal = (TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth || isAdmin;
     if(!canAccessGoal || !onboardingAnswers?.name) return;
     if(!localStorage.getItem("selah_signup_date")) {
@@ -6957,7 +6964,7 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, showLateNight, s
     const now = new Date();
     const isSunday = now.getDay() === 0;
     const isAfter6pm = now.getHours() >= 18;
-    const isGrowthPlus = (TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth || new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04";
+    const isGrowthPlus = (TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth || isAdminSession();
 
     if (!isSunday || !isAfter6pm || !isGrowthPlus) return;
 
@@ -7401,7 +7408,7 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
   }, []);
 
   // ── Anchor frequency-based refresh ──
-  const isAdmin = new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04";
+  const isAdmin = isAdminSession();
   const canShowAnchor = isAdmin || (TIER_LEVELS[tier]||0) >= TIER_LEVELS.foundation || isTrialActive;
 
   const isAnchorExpired = (cached) => {
@@ -7922,7 +7929,7 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
         )}
 
         {/* Monthly Goal — Growth & Deep tiers only */}
-      {((TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth || new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04") && monthlyGoal && (
+      {((TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth || isAdminSession()) && monthlyGoal && (
         <div style={{ background:`${C.sage}08`,border:`1.5px solid ${C.sage}33`,
           borderRadius:"12px",padding:"20px",marginBottom:"14px" }}>
           <div style={{ display:"flex",alignItems:"center",gap:"8px",marginBottom:"10px" }}>
@@ -10749,7 +10756,7 @@ function ProgressScreen({ C, font, setScreen, steadyDays, sessionCount, moodHist
   const [weeklyLoading,setWeeklyLoading]=useState(false);
   const [expandedSession,setExpandedSession]=useState(null);
   const [showAllSessions,setShowAllSessions]=useState(false);
-  const canAccessMirror = (TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth || new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04";
+  const canAccessMirror = (TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth || isAdminSession();
 
   const loadWeeklySummary=async()=>{
     setWeeklyLoading(true);
@@ -16381,14 +16388,17 @@ function AnalyticsScreen({ C, font, setScreen }) {
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState(30);
   const [tab, setTab] = useState("overview");
+  const adminToken = getAdminTokenFromUrl();
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/analytics?admin=selah2026&range=${range}`)
+    fetch(`/api/analytics?range=${range}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));
-  }, [range]);
+  }, [range, adminToken]);
 
   if (loading) return (
     <div style={{ minHeight:"100vh",background:C.bgPrimary,fontFamily:font,padding:"40px 20px",display:"flex",alignItems:"center",justifyContent:"center" }}>
@@ -16625,7 +16635,9 @@ function AnalyticsScreen({ C, font, setScreen }) {
               </p>
               <button onClick={()=>{
                 setLoading(true);
-                fetch(`/api/analytics?admin=selah2026&range=${range}`)
+                fetch(`/api/analytics?range=${range}`, {
+                  headers: { Authorization: `Bearer ${adminToken}` },
+                })
                   .then(r=>r.json()).then(d=>{setData(d);setLoading(false);}).catch(()=>setLoading(false));
               }} style={{ background:C.bgSecondary,border:`1px solid ${C.border}`,borderRadius:"6px",padding:"6px 12px",cursor:"pointer",color:C.textMuted,fontSize:"9px",fontFamily:font,fontStyle:"italic" }}>
                 Refresh
@@ -16716,7 +16728,7 @@ function SelahAppInner() {
   const [faithLevel, setFaithLevel] = useState(has("faithLevel") ? saved.faithLevel : 2);
   const [userName, setUserName]   = useState(has("userName") ? saved.userName : "");
   const [tier, setTier]           = useState(has("tier") ? saved.tier : "free");
-  const isAdmin = new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04";
+  const isAdmin = isAdminSession();
   const [trialStart, setTrialStart] = useState(has("trialStart") ? saved.trialStart : null);
   const [steadyDays, setSteadyDays] = useState(has("steadyDays") ? saved.steadyDays : 0);
   const [sessionCount, setSessionCount] = useState(has("sessionCount") ? saved.sessionCount : 0);
@@ -16840,7 +16852,7 @@ useEffect(() => {
     const elapsed = (Date.now() - trialStart) / (1000 * 60 * 60 * 24);
     return Math.max(0, Math.ceil(7 - elapsed));
   })();
-  const adminMode = new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04";
+  const adminMode = isAdminSession();
   const effectiveTier = adminMode ? "deep" : tier;
   const isTrialActive = effectiveTier === "free" && trialDaysLeft > 0;
   const weeklyGraceBudget = weeklyStreakGraceBudget(effectiveTier, isTrialActive);
@@ -17163,7 +17175,7 @@ useEffect(() => {
   useEffect(() => {
     if (tier === "free") return;
     // Don't check in admin mode
-    if (new URLSearchParams(window.location.search).get("admin") === "f7a3d9e2-4c1b-4e8f-b2a6-9d5c3e7f1a04") return;
+    if (isAdminSession()) return;
     const checkEmail = stripeEmail || userEmail;
     if (!checkEmail) {
       // Paid tier but no email to verify against — force downgrade

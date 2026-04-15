@@ -1,5 +1,25 @@
 // api/analytics.js — Event tracking + dashboard data
 // Uses Upstash Redis for storage
+import crypto from "crypto";
+
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || "";
+
+function constantTimeTokenMatch(expected, provided) {
+  if (!expected || !provided) return false;
+  const a = Buffer.from(String(expected));
+  const b = Buffer.from(String(provided));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function extractAdminToken(req) {
+  const auth = req.headers.authorization || "";
+  if (auth.startsWith("Bearer ")) return auth.slice(7).trim();
+  const headerToken = req.headers["x-admin-token"];
+  if (headerToken) return String(headerToken).trim();
+  if (req.query?.adminToken) return String(req.query.adminToken).trim();
+  return "";
+}
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -81,12 +101,14 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // GET = read analytics (admin only)
+    // GET = read analytics (admin only; auth enforced by server middleware)
     if (req.method === "GET") {
-      const { admin, range } = req.query;
-      if (admin !== "selah2026") return res.status(403).json({ error: "Unauthorized" });
-
-      const days = parseInt(range) || 30;
+      if (!ADMIN_API_TOKEN) return res.status(500).json({ error: "Admin authentication not configured" });
+      const token = extractAdminToken(req);
+      if (!constantTimeTokenMatch(ADMIN_API_TOKEN, token)) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+      const days = parseInt(req.query?.range, 10) || 30;
       const results = [];
 
       for (let i = 0; i < days; i++) {

@@ -12,7 +12,11 @@ const redis = async (cmd) => {
     },
     body: JSON.stringify(cmd),
   });
-  return r.json();
+  const data = await r.json();
+  if (data.error) {
+    throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
+  }
+  return data;
 };
 
 const PRAYER_KEY = "selah:prayers";
@@ -23,6 +27,11 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
+
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) {
+    console.error("Missing UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN");
+    return res.status(500).json({ error: "Database not configured" });
+  }
 
   const action = req.query?.action;
 
@@ -93,32 +102,39 @@ export default async function handler(req, res) {
   }
 
   // ── USER DATA SYNC ────────────────────────────────────
-  const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
-  if (!token) return res.status(401).json({ error: "No token" });
+  try {
+    const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
+    if (!token) return res.status(401).json({ error: "No token" });
 
-  // Look up email by token
-  const emailRes = await redis(["GET", `selah:token:${token}`]);
-  const email = emailRes.result;
-  if (!email) return res.status(401).json({ error: "Invalid token" });
+    const emailRes =
+      (await redis(["GET", `auth:token:${token}`]))?.result ||
+      (await redis(["GET", `selah:token:${token}`]))?.result;
+    const email = emailRes;
+    if (!email) return res.status(401).json({ error: "Invalid token" });
 
-  const key = `selah:user:${email}`;
+    const key = `selah:user:${email}`;
 
-  if (req.method === "GET") {
-    const d = await redis(["GET", key]);
-    if (!d.result) return res.status(200).json({});
-    try {
-      return res.status(200).json(JSON.parse(d.result));
-    } catch {
-      return res.status(200).json({});
+    if (req.method === "GET") {
+      const d = await redis(["GET", key]);
+      if (!d.result) return res.status(200).json({});
+      try {
+        const parsed = JSON.parse(d.result);
+        return res.status(200).json({ data: parsed });
+      } catch {
+        return res.status(200).json({});
+      }
     }
-  }
 
-  if (req.method === "POST") {
-    const { data } = req.body || {};
-    if (!data) return res.status(400).json({ error: "No data" });
-    await redis(["SET", key, JSON.stringify(data)]);
-    return res.status(200).json({ ok: true });
-  }
+    if (req.method === "POST") {
+      const { data } = req.body || {};
+      if (!data) return res.status(400).json({ error: "No data" });
+      await redis(["SET", key, JSON.stringify(data)]);
+      return res.status(200).json({ ok: true });
+    }
 
-  return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({ error: "Method not allowed" });
+  } catch (err) {
+    console.error("Sync error:", err);
+    return res.status(500).json({ error: err.message || "Sync failed" });
+  }
 }
