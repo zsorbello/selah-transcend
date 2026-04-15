@@ -13,7 +13,7 @@ import emails from './api/emails.js';
 import feedback from './api/feedback.js';
 import pushMorning from './api/push-morning.js';
 import pushSubscribe from './api/push-subscribe.js';
-import pushGuidedPrayer from './api/push-guided-prayer.js';
+
 import pushEveningPrayer from './api/push-evening-prayer.js';
 import stripePortal from './api/stripe-portal.js';
 import stripeWebhook from './api/stripe-webhook.js';
@@ -72,7 +72,7 @@ app.all('/api/emails', emails);
 app.all('/api/feedback', feedback);
 app.all('/api/push-morning', pushMorning);
 app.all('/api/push-subscribe', pushSubscribe);
-app.all('/api/push-guided-prayer', pushGuidedPrayer);
+
 app.all('/api/push-evening-prayer', pushEveningPrayer);
 app.all('/api/stripe-portal', stripePortal);
 app.all('/api/stripe-webhook', stripeWebhook);
