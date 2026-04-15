@@ -960,6 +960,22 @@ function Label({ text, color, font }) {
 // Tier access helper: returns true if user has access to a given tier level
 const TIER_LEVELS = { free:0, foundation:1, growth:2, deep:3 };
 const PAID_TIERS = new Set(["foundation", "growth", "deep"]);
+const MIDNIGHT_ROOM_STORAGE_KEY = "selah_midnight_room_seen_night";
+const MIDNIGHT_REFLECT_TONE_KEY = "selah_midnight_reflect_tone_override";
+const MIDNIGHT_REFLECT_TONE_OVERRIDE = "It's late and something is keeping you up. No goals tonight. Just talk.";
+const MIDNIGHT_ROOM_VERSE = {
+  text: "He who watches over Israel will neither slumber nor sleep.",
+  ref: "Psalm 121:4",
+};
+
+function getMidnightRoomNightKey(d = new Date()) {
+  const local = new Date(d);
+  if (local.getHours() < 4) local.setDate(local.getDate() - 1);
+  const y = local.getFullYear();
+  const m = String(local.getMonth() + 1).padStart(2, "0");
+  const day = String(local.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 /** Streak grace days per calendar week (Mon–Sun). Trial/free: none; Foundation/Growth: 1; Deep: 2. */
 function weeklyStreakGraceBudget(tier, isTrialActive) {
@@ -6743,6 +6759,64 @@ function GuidedTour({ C, font, onDismiss, onGoToSettings, setScreen }) {
 // ═══════════════════════════════════════════════════════
 // HOME SCREEN
 // ═══════════════════════════════════════════════════════
+function MidnightRoomModal({ C, font, onNeedSleep, onNeedBreathe, onStartPresence, onNotNow, onDismissPresence }) {
+  const [mode, setMode] = useState("menu");
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:420, background:"rgba(0,0,0,0.72)",
+      display:"flex", alignItems:"center", justifyContent:"center", padding:"28px", boxSizing:"border-box" }}>
+      <div style={{ width:"100%", maxWidth:"390px", background:C.bgPrimary, border:`1px solid ${C.border}`,
+        borderRadius:"16px", padding:"26px 22px", textAlign:"center",
+        boxShadow:"0 18px 42px rgba(0,0,0,0.45)", fontFamily:font }}>
+        {mode === "menu" ? (
+          <>
+            <h2 style={{ color:C.textPrimary, fontSize:"20px", lineHeight:"1.55", fontWeight:"normal", margin:"0 0 18px" }}>
+              It's late. You're still up. Selah is here.
+            </h2>
+            <div style={{ display:"flex", flexDirection:"column", gap:"10px", marginBottom:"14px" }}>
+              <button onClick={onNeedSleep} style={{ background:`${C.accent}14`, border:`1px solid ${C.accent}44`,
+                borderRadius:"10px", color:C.textPrimary, fontSize:"13px", padding:"12px 14px", cursor:"pointer",
+                fontFamily:font, fontStyle:"italic" }}>
+                I can't sleep
+              </button>
+              <button onClick={onNeedBreathe} style={{ background:`${C.sage}14`, border:`1px solid ${C.sage}44`,
+                borderRadius:"10px", color:C.textPrimary, fontSize:"13px", padding:"12px 14px", cursor:"pointer",
+                fontFamily:font, fontStyle:"italic" }}>
+                I need to breathe
+              </button>
+              <button onClick={()=>{ onStartPresence(); setMode("presence"); }} style={{ background:`${C.amber}14`,
+                border:`1px solid ${C.amber}44`, borderRadius:"10px", color:C.textPrimary, fontSize:"13px",
+                padding:"12px 14px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>
+                Just be here with me
+              </button>
+            </div>
+            <button onClick={onNotNow} style={{ background:"none", border:"none", cursor:"pointer",
+              color:C.textMuted, fontSize:"11px", textDecoration:"underline", fontFamily:font, fontStyle:"italic" }}>
+              Not now
+            </button>
+          </>
+        ) : (
+          <div>
+            <p style={{ color:C.textPrimary, fontSize:"15px", lineHeight:"1.9", fontStyle:"italic", margin:"0 0 8px" }}>
+              "{MIDNIGHT_ROOM_VERSE.text}"
+            </p>
+            <p style={{ color:C.accent, fontSize:"10px", letterSpacing:"2.5px", textTransform:"uppercase", margin:"0 0 16px" }}>
+              {MIDNIGHT_ROOM_VERSE.ref}
+            </p>
+            <p style={{ color:C.textSoft, fontSize:"13px", lineHeight:"1.85", fontStyle:"italic", margin:"0 0 18px" }}>
+              God doesn't sleep. He's here at 3am just as much as any other hour.
+            </p>
+            <button onClick={onDismissPresence} style={{ background:"none", border:`1px solid ${C.border}`,
+              borderRadius:"8px", color:C.textMuted, fontSize:"11px", padding:"10px 18px", cursor:"pointer",
+              fontFamily:font, fontStyle:"italic" }}>
+              Dismiss
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HomeScreen({ C, font, setScreen, userName, steadyDays, sharingEnabled, onboardingAnswers, faithLevel, isFirstVisit, onDismissWelcome, onLogMood, onActive, lastFeedbackPrompt, onDismissFeedback, sessionCount, tone, quoteFreq, tier, isTrialActive, onUpgrade, moodHistory, sessionHistory, journalEntries, setJournalEntries, seasonalMode, setSeasonalMode, currentSeason, graceUsedWeek, weeklyGraceBudget, showTutorial, setShowTutorial }) {
   const [quote,setQuote]=useState(null);
   const [loading,setLoading]=useState(true);
@@ -6775,6 +6849,7 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, sharingEnabled, 
   const [activeChallenge,setActiveChallenge]=useState(null);
   const [monthlyGoal,setMonthlyGoal]=useState(null);
   const [goalLoading,setGoalLoading]=useState(false);
+  const [showMidnightRoom, setShowMidnightRoom] = useState(false);
   const [missionUiRev,setMissionUiRev]=useState(0);
   const [weekInWords, setWeekInWords] = useState(null);
   const [weekInWordsLoading, setWeekInWordsLoading] = useState(false);
@@ -6882,6 +6957,18 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, sharingEnabled, 
       }
     } catch (e) {}
   }, []);
+
+  useEffect(() => {
+    const h = new Date().getHours();
+    const inWindow = h >= 23 || h < 4;
+    const canAccess = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !isTrialActive;
+    if (!inWindow || isFirstVisit || !canAccess) return;
+    let seenKey = null;
+    try { seenKey = localStorage.getItem(MIDNIGHT_ROOM_STORAGE_KEY); } catch {}
+    if (seenKey === getMidnightRoomNightKey()) return;
+    const timer = setTimeout(() => setShowMidnightRoom(true), 700);
+    return () => clearTimeout(timer);
+  }, [tier, isTrialActive, isFirstVisit]);
 
   useEffect(() => {
     try {
@@ -8653,6 +8740,29 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
       {showFeedbackPopup&&!showTutorial&&<FeedbackPopup C={C} font={font}
         onGoToFeedback={()=>{setShowFeedbackPopup(false);if(onDismissFeedback)onDismissFeedback();setScreen("feedback");}}
         onDismiss={()=>{setShowFeedbackPopup(false);if(onDismissFeedback)onDismissFeedback();}}/>}
+      {showMidnightRoom && (
+        <MidnightRoomModal C={C} font={font}
+          onNeedSleep={() => {
+            try { localStorage.setItem(MIDNIGHT_ROOM_STORAGE_KEY, getMidnightRoomNightKey()); } catch {}
+            try { localStorage.setItem(MIDNIGHT_REFLECT_TONE_KEY, MIDNIGHT_REFLECT_TONE_OVERRIDE); } catch {}
+            setShowMidnightRoom(false);
+            setScreen("reflect");
+          }}
+          onNeedBreathe={() => {
+            try { localStorage.setItem(MIDNIGHT_ROOM_STORAGE_KEY, getMidnightRoomNightKey()); } catch {}
+            setShowMidnightRoom(false);
+            setScreen("breathe");
+          }}
+          onStartPresence={() => {
+            try { localStorage.setItem(MIDNIGHT_ROOM_STORAGE_KEY, getMidnightRoomNightKey()); } catch {}
+          }}
+          onDismissPresence={() => setShowMidnightRoom(false)}
+          onNotNow={() => {
+            try { localStorage.setItem(MIDNIGHT_ROOM_STORAGE_KEY, getMidnightRoomNightKey()); } catch {}
+            setShowMidnightRoom(false);
+          }}
+        />
+      )}
       <style>{`@keyframes pulse{0%,100%{transform:scale(1);opacity:.4}50%{transform:scale(1.3);opacity:1}}`}</style>
     </div>
   );
@@ -8903,6 +9013,15 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
   const [voiceError,setVoiceError]=useState(null);
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   const [voiceSupported]=useState(()=>!!(window.SpeechRecognition||window.webkitSpeechRecognition));
+  const [toneOverride] = useState(() => {
+    try {
+      const stored = localStorage.getItem(MIDNIGHT_REFLECT_TONE_KEY);
+      if (stored) localStorage.removeItem(MIDNIGHT_REFLECT_TONE_KEY);
+      return stored || "";
+    } catch {
+      return "";
+    }
+  });
   // Track what was already in the input when we started, to avoid duplicating it
   const voiceBaseRef = useRef("");
   const voiceAccumulatedRef = useRef("");
@@ -9053,14 +9172,14 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     return "RESPONSE SHAPE: Give a warm, helpful 2-3 sentence reflection. Keep it general and encouraging.";
   })();
 
-  const toneInstruction = {
+  const toneInstruction = toneOverride || ({
     direct: "TONE: Be direct, grounded, and honest. Say things like 'What part of that hit you hardest?' and 'You don't have to carry this alone.' Be like a grounded older brother — calm, direct, emotionally literate. Don't over-soften. Get to the point with warmth.",
     warm: "TONE: Be warm, gentle, and conversational. Say things like 'Take your time — what's been weighing on you?' and 'There's no rush here.' Be nurturing and patient. Give space. Lead with empathy before direction. Let them feel safe before you challenge.",
     structured: "TONE: Be structured and methodical. Say things like 'Let's work through this step by step' and 'What's the first thing we should look at?' Be organized and clear. Help them break big feelings into manageable pieces. Use frameworks without being clinical.",
     spiritual: "TONE: Be spiritually grounded. Say things like 'What would trusting God look like here?' and 'Let's bring this to the Lord.' Lead with faith. Weave scripture and spiritual wisdom into every response naturally. Speak as someone walking alongside them in faith.",
     mentor: "TONE: Be a wise mentor. Speak like someone who has walked this road and come out stronger. Say things like 'You already know the answer — say it out loud' and 'What would the version of you that you're becoming do here?' Challenge them to lead themselves. Ask questions that expose blind spots. Be honest, even when it's uncomfortable. You respect them too much to be soft.",
     coach: "TONE: Be a direct, no-excuses coach. Say things like 'What's the one thing you're avoiding right now?' and 'Stop explaining why you can't and tell me what you will do.' Be relentless about action and accountability. Cut through stories and excuses with warmth but zero tolerance for self-deception. Push them toward ownership of every decision.",
-  }[tone] || "TONE: Be direct, grounded, and honest. Be like a grounded older brother — calm, direct, emotionally literate.";
+  }[tone] || "TONE: Be direct, grounded, and honest. Be like a grounded older brother — calm, direct, emotionally literate.");
 
   const minorSafety = isMinorUser ? " IMPORTANT: This user is under 18. Keep all content age-appropriate. Never discuss substance use, sexual content, or graphic violence. If they mention self-harm, abuse, or danger, immediately say CRISIS_DETECTED. Encourage them to talk to a trusted adult. Be extra warm, supportive, and encouraging. Use simpler language." : "";
 
@@ -18043,6 +18162,24 @@ useEffect(() => {
       return null;
     })();
     return <ScreenTransition screenKey={appScreen}>{flowContent}</ScreenTransition>;
+  }
+
+  if (!showSub && effectiveTier === "free" && trialDaysLeft <= 0) {
+    return (
+      <div style={{ minHeight:"100vh",background:C.bgPrimary,fontFamily:font,
+        display:"flex",alignItems:"center",justifyContent:"center",padding:"28px",boxSizing:"border-box" }}>
+        <div style={{ maxWidth:"460px",width:"100%",textAlign:"left" }}>
+          <p style={{ color:C.textPrimary,fontSize:"18px",lineHeight:"1.85",margin:"0 0 26px",whiteSpace:"pre-line" }}>
+            {"Trial ended. The work isn't.\nYou showed up when most people don't. That means something.\nThe full Selah goes deeper than you've seen — an AI that knows you, ancient practices used for centuries, and journeys built for exactly what you're carrying. Don't stop here."}
+          </p>
+          <button onClick={()=>setShowSub(true)} style={{ width:"100%",background:C.accent,border:"none",
+            borderRadius:"10px",color:"#fff",fontSize:"12px",letterSpacing:"1.6px",padding:"14px 18px",
+            cursor:"pointer",fontFamily:font }}>
+            See What Selah Offers
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
