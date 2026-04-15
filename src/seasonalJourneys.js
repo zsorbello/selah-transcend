@@ -1,6 +1,6 @@
 /**
- * Seasonal Journeys — 10 themed paths × 14 daily steps (Foundation+ paid; not trial).
- * Each step: title, quote (scripture or wisdom line), prompt, optional action.
+ * Seasonal Journeys — starter set (3 paths) with 14 authored steps each.
+ * Users can choose either a 7-day or 14-day run when starting a journey.
  */
 
 function S(title, quote, prompt, action) {
@@ -8,48 +8,6 @@ function S(title, quote, prompt, action) {
 }
 
 export const SEASONAL_JOURNEYS = [
-  {
-    id: "advent",
-    title: "Advent",
-    subtitle: "Waiting with hope",
-    steps: [
-      S("A light in the dark", '"The people walking in darkness have seen a great light." — Isaiah 9:2', "Where does it still feel dark in your life — and where have you already seen a thin line of light?", "Name one place you will look for light this week."),
-      S("Prepare the way", '"Make straight in the desert a highway for our God." — Isaiah 40:3', "What inner clutter makes it hard for you to hear anything gentle or holy?", "Clear one small physical space today as an outward sign."),
-      S("Come, Lord", '"Come, thou long expected Jesus." — Charles Wesley (hymn)', "What are you waiting for right now — honestly?", "Speak one sentence of longing in prayer, however clumsy."),
-      S("The humble door", '"He came and dwelt among us." — John 1:14 (paraphrase)', "Where might God be closer than you assume — in the ordinary?", "Notice one ordinary moment with unusual attention."),
-      S("Peace, not panic", '"Peace I leave with you." — John 14:27', "What usually steals your peace first — and what would peace look like at half volume?", "Take three slow breaths before your next transition."),
-      S("Joy in restraint", '"Rejoice in the Lord always." — Philippians 4:4', "Can you rejoice in something small without forcing cheer?", "Write down three tiny graces from today."),
-      S("Love bends low", '"Love is patient, love is kind." — 1 Corinthians 13:4', "Who needs your patience more than your opinion right now?", "Send a kind word or pray specifically for one difficult person."),
-      S("The road is long", '"They that wait upon the Lord shall renew their strength." — Isaiah 40:31', "What part of waiting feels like failure to you?", "Release one timeline you cannot control — say it aloud or write it."),
-      S("Room at the inn", '"There was no room…" — Luke 2:7', "Where do you feel there is no room for you — and where could you make room for someone else?", "Offer space: a text, a meal, or a silent blessing."),
-      S("Glory in the ordinary", '"The Word became flesh." — John 1:14', "How does holiness show up in your actual week — dishes, traffic, bedtime?", "Bless one mundane task before you do it."),
-      S("Do not be afraid", '"Do not be afraid… I bring you good news." — Luke 2:10', "What fear is loudest tonight — and what is truer than the fear?", "Replace one fear-thought with one true sentence."),
-      S("Treasure in fragility", '"Mary treasured these things in her heart." — Luke 2:19', "What do you want to hold gently instead of fixing?", "Sit quietly for two minutes with an open hand."),
-      S("The night is not the end", '"The light shines in the darkness." — John 1:5', "Where have you mistaken an ending for the whole story?", "Name one hope that does not depend on circumstances."),
-      S("God with us", '"They will call him Immanuel — God with us." — Matthew 1:23', "How does “with” change the room you are in — even if nothing else changes?", "Close this journey with one sentence of trust."),
-    ],
-  },
-  {
-    id: "lent",
-    title: "Lent",
-    subtitle: "Forty days toward the cross — honesty and return",
-    steps: [
-      S("Remember you are dust", '"Remember that you are dust, and to dust you will return." — Genesis 3:19 (tradition)', "What truth about your limits feels like relief — not shame?", "Choose one small fast from noise (not food) for part of today."),
-      S("Turn, don’t perform", '"Rend your heart, not your garments." — Joel 2:13', "Where are you performing healing you have not yet felt?", "Tell God one thing you are not ready to fix."),
-      S("The hidden life", '"When you pray, go into your room…" — Matthew 6:6', "What part of your inner life needs privacy with God — not an audience?", "Pray in silence for five minutes, no words required."),
-      S("Mercy over metrics", '"I desire mercy, not sacrifice." — Matthew 9:13', "Where have you graded yourself harshly this week?", "Offer yourself the mercy you would give a friend."),
-      S("The weight you carry", '"Come to me, all you who are weary." — Matthew 11:28', "Name the weight without explaining it away.", "Write one sentence of lament — honest, not tidy."),
-      S("Forgive as you’ve been forgiven", '"Forgive us our debts, as we also have forgiven." — Matthew 6:12', "Who is hardest to forgive today — including yourself?", "One step toward forgiveness: prayer, boundary, or honest word."),
-      S("The cup you’d rather pass", '"Father, if you are willing, take this cup." — Luke 22:42', "What are you asking to be taken away — and what might it be teaching you?", "Stay present through one uncomfortable feeling without fixing it."),
-      S("Love that costs", '"Greater love has no one than this." — John 15:13', "Where is love costing you something real right now?", "Do one loving act that is inconvenient."),
-      S("The road through pain", '"Surely he took up our pain." — Isaiah 53:4', "What pain have you been carrying alone?", "Share one honest sentence with God or one safe person."),
-      S("Silence before mystery", '"Jesus remained silent." — Matthew 26:63', "What silence in your life might be holy — not empty?", "Practice silence: no input for fifteen minutes."),
-      S("Friday truth", '"My God, my God, why have you forsaken me?" — Matthew 27:46', "Where does God feel absent — and can you stay in the question?", "Don’t rush to Easter in your mind. Stay with what is real."),
-      S("The stone rolls", '"Why do you look for the living among the dead?" — Luke 24:5', "What in you felt dead — and might be stirring?", "Name one new possibility you have been afraid to hope."),
-      S("Breakfast on the beach", '"Come and have breakfast." — John 21:12', "Where is Jesus meeting you in the ordinary after pain?", "Share a meal or coffee with gratitude — alone or with someone."),
-      S("Feed my sheep", '"Do you love me? … Feed my sheep." — John 21:17', "How will this season change what you do — not just what you feel?", "One concrete act of love in the next week."),
-    ],
-  },
   {
     id: "anxiety_peace",
     title: "Anxiety & Peace",
@@ -93,27 +51,6 @@ export const SEASONAL_JOURNEYS = [
     ],
   },
   {
-    id: "healing_forgiveness",
-    title: "Healing & Forgiveness",
-    subtitle: "Softening what hardened",
-    steps: [
-      S("The wound has a name", '"He heals the brokenhearted." — Psalm 147:3', "What hurt still has your attention?", "Name it without blaming or excusing yet."),
-      S("Truth before truce", '"You will know the truth, and the truth will set you free." — John 8:32', "What truth have you avoided because it hurts?", "Write one true sentence."),
-      S("Their humanity", '"Father, forgive them." — Luke 23:34', "Can you see the other person as more than their worst moment?", "Without excusing harm, name one human limitation."),
-      S("Your humanity", '"If we confess our sins, he is faithful." — 1 John 1:9', "What do you need forgiveness for — from God or yourself?", "Confess one thing — to God, a trusted person, or paper."),
-      S("Boundaries are love", '"Be wise as serpents, innocent as doves." — Matthew 10:16', "Where does forgiveness meet protection?", "Name one boundary that is not punishment."),
-      S("The cycle", '"Forgive as the Lord forgave you." — Colossians 3:13', "What pattern repeats when you don’t forgive?", "Identify one trigger and one response you want."),
-      S("Bitterness’ cost", '"See to it that no bitter root grows up." — Hebrews 12:15', "What is bitterness costing you today?", "One small act of release — ritual or prayer."),
-      S("Repair where possible", '"Go and be reconciled." — Matthew 5:24', "Is reconciliation safe or wise — or only inner work?", "Discern: contact, distance, or silent release."),
-      S("When they won’t say sorry", '"It is mine to avenge." — Romans 12:19', "What do you want from them that you may never get?", "Grieve that gap — don’t fill it with fantasy."),
-      S("Self-forgiveness", '"There is no condemnation." — Romans 8:1', "What shame still speaks louder than grace?", "Replace one shame-thought with one grace-thought."),
-      S("Slow healing", '"He brought me up out of a horrible pit." — Psalm 40:2', "What small sign of healing have you dismissed?", "Notice one improvement — body, sleep, or mood."),
-      S("Compassion for the child you were", '"Train up a child…" — Proverbs 22:6', "What did younger you need that no one gave?", "Speak one kind sentence to your past self."),
-      S("Freedom", '"Where the Spirit of the Lord is, there is freedom." — 2 Corinthians 3:17', "What would freedom feel like in your body?", "Stretch, walk, or breathe — embody release."),
-      S("Walking forward", '"Forgetting what is behind… I press on." — Philippians 3:13-14', "What forward step fits this season?", "One commitment for the next week."),
-    ],
-  },
-  {
     id: "identity_purpose",
     title: "Identity & Purpose",
     subtitle: "Who you are beneath the roles",
@@ -134,92 +71,8 @@ export const SEASONAL_JOURNEYS = [
       S("Held by the larger story", '"For I know the plans I have for you." — Jeremiah 29:11', "How does your story connect to something bigger than achievement?", "Close with one sentence of trust in your name and calling."),
     ],
   },
-  {
-    id: "rest_surrender",
-    title: "Rest & Surrender",
-    subtitle: "Stopping without shame",
-    steps: [
-      S("The God who rests", '"On the seventh day he rested." — Genesis 2:2', "What would it mean if rest were holy — not lazy?", "Stop one task fifteen minutes early."),
-      S("Permission", '"Come to me, all who are weary." — Matthew 11:28', "What are you weary of — underneath the busy?", "Say “enough” to one thing today."),
-      S("Surrender isn’t failure", '"Not my will, but yours." — Luke 22:42', "What are you white-knuckling?", "Release one outcome in prayer."),
-      S("Sabbath in a hour", '"Remember the Sabbath day." — Exodus 20:8', "Where could an hour be set apart — phone down?", "Protect one hour — walk, silence, or beauty."),
-      S("Sleep as trust", '"In peace I will lie down and sleep." — Psalm 4:8', "What keeps you from sleep — body or mind?", "One wind-down ritual tonight."),
-      S("Unproductive prayer", '"Wait for the Lord." — Psalm 27:14', "Can you be with God without getting answers?", "Sit five minutes — no agenda."),
-      S("Let others carry", '"Two are better than one." — Ecclesiastes 4:9', "What are you carrying that belongs shared?", "Ask for help — one specific ask."),
-      S("Joy in limits", '"My grace is sufficient." — 2 Corinthians 12:9', "What limit is teaching you dependence?", "Thank God for one limit — honestly."),
-      S("Silence over noise", '"Be still." — Psalm 46:10', "What noise fills the gap when you’re still?", "Mute one input stream today."),
-      S("Gentle pace", '"He tends his flock like a shepherd." — Isaiah 40:11', "Where would gentleness change your day?", "Walk slower for five minutes — notice."),
-      S("Surrender the scoreboard", '"Whoever wants to save their life will lose it." — Luke 9:24', "What score are you keeping — with God or yourself?", "Erase one metric from your mind today."),
-      S("Rest after grief", '"My soul finds rest in God alone." — Psalm 62:1', "What sadness needs rest, not fixing?", "Nap, sit, or cry — without multitasking."),
-      S("Return to work", '"There is a time to scatter stones and a time to gather them." — Ecclesiastes 3:5', "How will you return to motion without losing peace?", "Plan tomorrow’s first hour with margin."),
-      S("Abide", '"Remain in me." — John 15:4', "What does abiding look like in your actual week?", "Choose one rhythm — prayer, walk, or pause — to keep."),
-    ],
-  },
-  {
-    id: "renewal",
-    title: "Renewal",
-    subtitle: "New mercies, new ground",
-    steps: [
-      S("Morning mercy", '"His mercies are new every morning." — Lamentations 3:23', "What do you need mercy for — today, not someday?", "Receive today as a clean page — one line of hope."),
-      S("Dry ground", '"I will make rivers in the desert." — Isaiah 43:19', "Where has life felt barren?", "Water one area: body, relationship, or prayer."),
-      S("Pruning", '"Every branch that does bear fruit he prunes." — John 15:2', "What has been cut back — and what might grow?", "Name one loss that might make space."),
-      S("Small green shoots", '"Though it is the smallest of all seeds…" — Matthew 13:32', "What tiny sign of life do you dismiss?", "Celebrate one small improvement."),
-      S("Forgotten dreams", '"I will restore to you the years that the locusts have eaten." — Joel 2:25', "What dream is not dead — just dormant?", "Write one sentence of permission to try again."),
-      S("Renewed mind", '"Be transformed by the renewing of your mind." — Romans 12:2', "What old story about yourself is ready to retire?", "Replace it with one truer sentence."),
-      S("Strength in weakness", '"When I am weak, then I am strong." — 2 Corinthians 12:10', "Where are you afraid of weakness?", "Admit one limit — to God or a friend."),
-      S("Creative hope", '"See, I am doing a new thing!" — Isaiah 43:19', "What new thing — even tiny — might God be doing?", "Try one new practice for seven days."),
-      S("Clean hands", '"Create in me a clean heart, O God." — Psalm 51:10', "What needs cleansing — habit, word, or attitude?", "One act of repair or apology."),
-      S("Community renewal", '"Encourage one another daily." — Hebrews 3:13', "Who encourages you toward life?", "Reach out with gratitude or honesty."),
-      S("Land after flood", '"I have set my rainbow in the clouds." — Genesis 9:13', "What covenant do you sense — with God or yourself?", "Mark this season with a symbol — stone, note, or song."),
-      S("Energy honest", '"Even youths grow tired." — Isaiah 40:30', "What pace is sustainable for you — really?", "Cut one commitment or expectation."),
-      S("Joy returns", '"You have turned my mourning into dancing." — Psalm 30:11', "Where is joy cautious — and where might it return?", "Do one thing just for delight."),
-      S("Go forward", '"Arise, shine, for your light has come." — Isaiah 60:1', "What light do you carry into the next chapter?", "One sentence of commitment."),
-    ],
-  },
-  {
-    id: "loneliness",
-    title: "Loneliness",
-    subtitle: "When the room is full but the heart isn’t",
-    steps: [
-      S("Naming the ache", '"My soul thirsts for God." — Psalm 42:2', "What kind of lonely is this — alone, unseen, or disconnected?", "Name it without fixing."),
-      S("God with the isolated", '"I am with you always." — Matthew 28:20', "Where do you feel God is — close, quiet, absent?", "One honest sentence of prayer about presence."),
-      S("The crowd and the void", '"The Lord is close to the brokenhearted." — Psalm 34:18', "When has loneliness hit hardest — in company or solitude?", "Recall one moment someone saw you."),
-      S("False comforts", '"Apart from me you can do nothing." — John 15:5', "What do you scroll, eat, or avoid to numb the ache?", "Swap one numbing habit for five minutes of stillness."),
-      S("Initiation is courage", '"There is a friend who sticks closer than a brother." — Proverbs 18:24', "Who could you reach toward — first?", "Send one vulnerable message."),
-      S("Belonging vs fitting in", '"You are no longer foreigners and strangers." — Ephesians 2:19', "Where have you performed belonging?", "Name one place you could show up more honestly."),
-      S("Loneliness after loss", '"Man of sorrows… acquainted with grief." — Isaiah 53:3', "Who or what left a hole — and what helps now?", "Light a candle or journal one memory."),
-      S("The phone isn’t enough", '"As iron sharpens iron." — Proverbs 27:17', "What kind of connection are you starving for?", "Plan one in-person or voice connection."),
-      S("Serving as doorway", '"Whoever wants to be great must be your servant." — Matthew 20:26', "How might serving pull you out of self-focus?", "One small act for someone else today."),
-      S("Silence with God", '"Be still, and know." — Psalm 46:10', "Can loneliness become solitude — sacred, not empty?", "Ten minutes alone with no input."),
-      S("Church of two", '"For where two or three gather…" — Matthew 18:20', "Who is your “two” — even imperfect?", "Pray for or with one person."),
-      S("Night loneliness", '"I lie awake thinking of you." — Psalm 63:6 (adapted)', "What visits you at night?", "Prepare a short phrase of comfort for 3 a.m."),
-      S("You are seen", '"See what great love the Father has lavished on us." — 1 John 3:1', "What would it change if you believed you were seen — truly?", "Write “seen” somewhere you’ll notice."),
-      S("Open hands", '"A father to the fatherless." — Psalm 68:5', "How will you seek connection without grasping?", "One step — group, therapy, church, or friend — this month."),
-    ],
-  },
-  {
-    id: "faith_doubt",
-    title: "Faith & Doubt",
-    subtitle: "Honest belief in a complicated world",
-    steps: [
-      S("Doubt isn’t the enemy", '"I believe; help my unbelief." — Mark 9:24', "What do you doubt — God, yourself, both?", "Write your doubt as a prayer — raw."),
-      S("Questions God can hold", '"Why have you forsaken me?" — Psalm 22:1', "What question have you been afraid to say aloud?", "Ask it — in prayer, out loud, or on paper."),
-      S("Faith and feeling", '"We walk by faith, not by sight." — 2 Corinthians 5:7', "When feelings and faith disagree — what then?", "Name one thing you trust without feeling."),
-      S("Evidence and mystery", '"Now we see but a poor reflection." — 1 Corinthians 13:12', "What part of faith must stay mystery — for now?", "Release one demand for certainty."),
-      S("Anger at God", '"How long, O Lord?" — Psalm 13:1', "Are you angry at God — and can you admit it?", "Tell God — not a sanitized version."),
-      S("The long silence", '"My God, my God, why have you forsaken me?" — Matthew 27:46', "When has God felt silent?", "Sit in the silence without rushing an answer."),
-      S("Small obediences", '"If you have faith as small as a mustard seed." — Matthew 17:20', "What tiny step of faith is possible today?", "Do one small obedient act."),
-      S("Community of doubters", '"Doubting Thomas." — John 20:24 (tradition)', "Who can handle your questions without fixing you?", "Share one doubt with a safe person."),
-      S("Beauty as argument", '"The heavens declare the glory of God." — Psalm 19:1', "Where does beauty break through your skepticism?", "Spend ten minutes outside or with art."),
-      S("Scripture that wrestles", '"Jacob wrestled with him." — Genesis 32:24', "What text or story mirrors your struggle?", "Read one passage slowly — argue with it if you need to."),
-      S("Love as proof", '"We love because he first loved us." — 1 John 4:19', "Where have you experienced love that didn’t earn?", "Thank God for one undeserved gift."),
-      S("Resurrection hope", '"Death has been swallowed up in victory." — 1 Corinthians 15:54', "What in your life needs resurrection — not just explanation?", "Hope out loud — one sentence."),
-      S("Faith for Monday", '"Whatever you do, do it all for the glory of God." — 1 Corinthians 10:31', "How does faith touch your ordinary Tuesday?", "One Monday habit that points you Godward."),
-      S("I am still yours", '"Neither death nor life… will separate us from the love of God." — Romans 8:38-39', "What can you say yes to — even with questions?", "Close with one sentence of faith — however small."),
-    ],
-  },
 ];
 
 export function defaultJourneyProgress() {
-  return { activeId: null, byJourney: {}, completed: [] };
+  return { activeId: null, byJourney: {}, completed: [], customJourneys: [] };
 }

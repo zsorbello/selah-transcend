@@ -972,6 +972,9 @@ function mergeJourneyProgressState(prev, cloud) {
     activeId: prev.activeId || cloud.activeId || null,
     byJourney: by,
     completed: mergedCompleted,
+    customJourneys: Array.isArray(prev.customJourneys) && prev.customJourneys.length
+      ? prev.customJourneys
+      : (Array.isArray(cloud.customJourneys) ? cloud.customJourneys : []),
   };
 }
 
@@ -8362,7 +8365,7 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
           {[
             {icon:"◈",label:"Reflect",sub:"Begin a session",bg:`${C.sage}15`,color:C.sage,border:`${C.sage}22`,screen:"reflect"},
             {icon:"✍️",label:"Notebook",sub:"Write freely",bg:`${C.terra}12`,color:C.terra,border:`${C.terra}20`,screen:"journal"},
-            {icon:"🗺️",label:"Journeys",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation||isTrialActive?"🔒 Foundation+":"14-day seasonal paths",bg:`${C.accent}10`,color:C.accent,border:`${C.accent}22`,screen:"journeys"},
+            !isTrialActive ? {icon:"🗺️",label:"Journeys",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"Growth+ required":"3 journeys + AI unlocks",bg:`${C.accent}10`,color:C.accent,border:`${C.accent}22`,screen:"journeys"} : null,
             {icon:"📜",label:"Biblical Reflections",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.foundation?"🔒 Foundation+":"Real stories, told straight",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}15`,screen:"stories"},
             {icon:"🌑",label:"Heavy Day",sub:"Lament. Be honest.",bg:`${C.terra}08`,color:C.terra,border:`${C.terra}18`,screen:"heavyday"},
             {icon:"🙏",label:"Gratitude",sub:"Count your blessings",bg:`${C.amber}08`,color:C.amber,border:`${C.amber}18`,screen:"gratitude"},
@@ -8375,7 +8378,7 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
             {icon:"📖",label:"Resources",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"Books & wisdom",bg:`${C.amber}12`,color:C.amber,border:`${C.amber}20`,screen:"resources"},
             {icon:"📊",label:"Progress",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"Your growth",bg:`${C.sageLight}25`,color:C.sageDark,border:`${C.sage}22`,screen:"progress"},
             {icon:"🧩",label:"Assessments",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.deep?"🔒 Deep+":"Know yourself",bg:`${C.accent}12`,color:C.accent,border:`${C.accent}20`,screen:"assessments"},
-          ].map(item=>(
+          ].filter(Boolean).map(item=>(
             <button key={item.label} onClick={()=>{
               if(item.screen==="_crisis"){ setShowCrisisPanel(true); return; }
               // If sub shows lock, block navigation and show upgrade
@@ -11911,14 +11914,50 @@ function PrayerWallScreen({ C, font, onClose, tier, isTrialActive, onUpgrade }) 
 // ═══════════════════════════════════════════════════════
 // SEASONAL JOURNEYS
 // ═══════════════════════════════════════════════════════
-function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgress }) {
-  const [panel, setPanel] = useState("list");
+function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgress, onboardingAnswers, faithLevel }) {
+  const [panel, setPanel] = useState("list"); // list | length | step | summary | doneBadge | doneReflection
   const [selectedId, setSelectedId] = useState(null);
+  const [pendingLengthId, setPendingLengthId] = useState(null);
   const [justFinished, setJustFinished] = useState(null);
+  const [completionReflection, setCompletionReflection] = useState("");
+  const [loadingReflection, setLoadingReflection] = useState(false);
+  const [unlockingJourney, setUnlockingJourney] = useState(false);
+  const [unlockMsg, setUnlockMsg] = useState("");
 
   const todayStr = new Date().toISOString().split("T")[0];
-  const getProg = (jid) => journeyProgress.byJourney[jid] || { completed: 0, lastDate: null };
+  const allJourneys = useMemo(
+    () => [...SEASONAL_JOURNEYS, ...(Array.isArray(journeyProgress.customJourneys) ? journeyProgress.customJourneys : [])],
+    [journeyProgress.customJourneys]
+  );
+
+  const getJourneyById = (jid) => allJourneys.find((j) => j.id === jid) || null;
+  const getProg = (jid) => journeyProgress.byJourney[jid] || { completed: 0, lastDate: null, length: null };
   const isJourneyDone = (jid) => journeyProgress.completed.includes(jid);
+
+  const getJourneyLength = (jid) => {
+    const p = getProg(jid);
+    return p.length || 14;
+  };
+
+  const activateJourney = (jid, chosenLength) => {
+    setJourneyProgress((prev) => {
+      const existing = prev.byJourney[jid] || { completed: 0, lastDate: null, length: null };
+      return {
+        ...prev,
+        activeId: jid,
+        byJourney: {
+          ...prev.byJourney,
+          [jid]: {
+            completed: existing.completed || 0,
+            lastDate: existing.lastDate || null,
+            length: chosenLength || existing.length || 14,
+          },
+        },
+      };
+    });
+    setSelectedId(jid);
+    setPanel("step");
+  };
 
   const selectJourney = (jid) => {
     if (isJourneyDone(jid)) {
@@ -11929,33 +11968,170 @@ function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgres
     if (journeyProgress.activeId && journeyProgress.activeId !== jid) {
       if (!window.confirm("Set this as your active journey? You can only move one path forward at a time; other journeys stay saved.")) return;
     }
-    setJourneyProgress((prev) => ({
-      ...prev,
-      activeId: jid,
-      byJourney: {
-        ...prev.byJourney,
-        [jid]: prev.byJourney[jid] || { completed: 0, lastDate: null },
-      },
-    }));
-    setSelectedId(jid);
-    setPanel("step");
+    const p = getProg(jid);
+    if (!p.length) {
+      setPendingLengthId(jid);
+      setPanel("length");
+      return;
+    }
+    activateJourney(jid, p.length);
+  };
+
+  const safeName = (onboardingAnswers?.name || "").trim() || "friend";
+  const broughtBy = Array.isArray(onboardingAnswers?.reasons)
+    ? onboardingAnswers.reasons.join(", ")
+    : (onboardingAnswers?.reasons || "they wanted help finding steady ground");
+  const carrying = onboardingAnswers?.biggest || "they have been carrying a lot";
+  const faithLine = typeof onboardingAnswers?.faith === "string" && onboardingAnswers.faith.trim()
+    ? onboardingAnswers.faith.trim()
+    : `Faith level ${faithLevel ?? 2} out of 4`;
+
+  const loadCompletionReflection = async (journey) => {
+    if (!journey) return;
+    setLoadingReflection(true);
+    try {
+      const r = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 280,
+          messages: [{
+            role: "user",
+            content:
+              `Write a personal completion reflection in 3-4 sentences.\n` +
+              `Person: ${safeName}\n` +
+              `Journey completed: ${journey.title}\n` +
+              `What brought them here: ${broughtBy}\n` +
+              `What they are carrying: ${carrying}\n` +
+              `Faith level/context: ${faithLine}\n` +
+              `Tone: warm, specific, grounded, encouraging. No bullet points.`
+          }]
+        })
+      });
+      const d = await r.json();
+      const txt = d?.content?.[0]?.text?.trim();
+      setCompletionReflection(txt || "You stayed with what was real, one day at a time. That kind of honesty builds strength deeper than momentum.");
+    } catch (e) {
+      setCompletionReflection("You stayed with what was real, one day at a time. That kind of honesty builds strength deeper than momentum.");
+    } finally {
+      setLoadingReflection(false);
+    }
+  };
+
+  const tryParseJourneyJson = (raw) => {
+    if (!raw) return null;
+    const cleaned = String(raw).trim().replace(/^```json\s*/i, "").replace(/^```/, "").replace(/```$/, "").trim();
+    const direct = (() => { try { return JSON.parse(cleaned); } catch { return null; } })();
+    if (direct) return direct;
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    try { return JSON.parse(m[0]); } catch { return null; }
+  };
+
+  const unlockPersonalizedJourney = async () => {
+    if (!justFinished) return;
+    setUnlockingJourney(true);
+    setUnlockMsg("");
+    const chosenLength = getJourneyLength(justFinished.id);
+    try {
+      const r = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1100,
+          messages: [{
+            role: "user",
+            content:
+              `Create one new personalized Christian reflection journey for Selah.\n` +
+              `Return JSON only in this format:\n` +
+              `{"title":"...","subtitle":"...","steps":[{"title":"...","prompt":"..."}, ...]}\n` +
+              `Rules:\n` +
+              `- steps must contain exactly ${chosenLength} items\n` +
+              `- subtitle must be one line\n` +
+              `- each prompt should be 1-2 sentences and personal\n` +
+              `- journey should build on what they just completed (${justFinished.title})\n` +
+              `- no markdown\n\n` +
+              `Profile:\n` +
+              `Name: ${safeName}\n` +
+              `What brought them: ${broughtBy}\n` +
+              `What they're carrying: ${carrying}\n` +
+              `Faith context: ${faithLine}`
+          }]
+        })
+      });
+      const d = await r.json();
+      const parsed = tryParseJourneyJson(d?.content?.[0]?.text || "");
+      const now = Date.now();
+      const newId = `ai_journey_${now}`;
+      const fallbackTitle = `${justFinished.title}: Next Steps`;
+      const fallbackSubtitle = "A personalized path for what comes next";
+      const rawSteps = Array.isArray(parsed?.steps) ? parsed.steps : [];
+      const normalized = rawSteps
+        .slice(0, chosenLength)
+        .map((s, i) => ({
+          title: typeof s?.title === "string" && s.title.trim() ? s.title.trim() : `Day ${i + 1}`,
+          quote: "",
+          prompt: typeof s?.prompt === "string" && s.prompt.trim() ? s.prompt.trim() : "Take one honest step with God today.",
+          action: null,
+        }));
+      while (normalized.length < chosenLength) {
+        normalized.push({
+          title: `Day ${normalized.length + 1}`,
+          quote: "",
+          prompt: "Take one honest step with God today.",
+          action: null,
+        });
+      }
+      const unlockedJourney = {
+        id: newId,
+        title: (typeof parsed?.title === "string" && parsed.title.trim()) ? parsed.title.trim() : fallbackTitle,
+        subtitle: (typeof parsed?.subtitle === "string" && parsed.subtitle.trim()) ? parsed.subtitle.trim() : fallbackSubtitle,
+        steps: normalized,
+        generated: true,
+      };
+      setJourneyProgress((prev) => {
+        const custom = Array.isArray(prev.customJourneys) ? prev.customJourneys : [];
+        return {
+          ...prev,
+          customJourneys: [...custom, unlockedJourney],
+          byJourney: {
+            ...prev.byJourney,
+            [newId]: { completed: 0, lastDate: null, length: chosenLength },
+          },
+        };
+      });
+      setUnlockMsg(`Unlocked: ${unlockedJourney.title}`);
+    } catch (e) {
+      setUnlockMsg("We couldn’t generate your new journey right now. Please try again.");
+      setUnlockingJourney(false);
+      return;
+    }
+    setUnlockingJourney(false);
+    setJustFinished(null);
+    setSelectedId(null);
+    setPendingLengthId(null);
+    setPanel("list");
   };
 
   const completeToday = () => {
     const jid = selectedId;
     if (!jid) return;
     const p = getProg(jid);
-    if (p.lastDate === todayStr || p.completed >= 14) return;
+    const totalDays = getJourneyLength(jid);
+    if (p.lastDate === todayStr || p.completed >= totalDays) return;
     const next = p.completed + 1;
-    const doneNow = next === 14;
+    const doneNow = next === totalDays;
     setJourneyProgress((prev) => {
-      const by = { ...prev.byJourney, [jid]: { completed: next, lastDate: todayStr } };
+      const by = {
+        ...prev.byJourney,
+        [jid]: { ...(prev.byJourney[jid] || {}), completed: next, lastDate: todayStr, length: totalDays },
+      };
       let completed = prev.completed;
       if (doneNow && !completed.includes(jid)) {
         completed = [...completed, jid];
-        try {
-          localStorage.setItem("selah_journeys_completed", JSON.stringify(completed));
-        } catch (e) {}
+        try { localStorage.setItem("selah_journeys_completed", JSON.stringify(completed)); } catch (e) {}
         window.dispatchEvent(new Event(JOURNEY_EVENT));
       }
       return {
@@ -11966,35 +12142,52 @@ function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgres
       };
     });
     if (doneNow) {
-      setJustFinished(SEASONAL_JOURNEYS.find((j) => j.id === jid) || null);
-      setPanel("done");
+      setJustFinished(getJourneyById(jid));
+      setCompletionReflection("");
+      setPanel("doneBadge");
     }
   };
 
-  const journey = selectedId ? SEASONAL_JOURNEYS.find((j) => j.id === selectedId) : null;
-  const prog = selectedId ? getProg(selectedId) : { completed: 0, lastDate: null };
-  const step = journey && prog.completed < 14 ? journey.steps[prog.completed] : null;
-  const pct = journey ? Math.round((prog.completed / 14) * 100) : 0;
-  const canCompleteToday = step && prog.lastDate !== todayStr && prog.completed < 14;
+  const journey = selectedId ? getJourneyById(selectedId) : null;
+  const prog = selectedId ? getProg(selectedId) : { completed: 0, lastDate: null, length: null };
+  const totalDays = selectedId ? getJourneyLength(selectedId) : 14;
+  const step = journey && prog.completed < totalDays ? journey.steps[prog.completed] : null;
+  const pct = journey ? Math.round((prog.completed / totalDays) * 100) : 0;
+  const canCompleteToday = step && prog.lastDate !== todayStr && prog.completed < totalDays;
+
+  const resetToList = () => {
+    setPanel("list");
+    setSelectedId(null);
+    setPendingLengthId(null);
+    setJustFinished(null);
+    setCompletionReflection("");
+    setLoadingReflection(false);
+    setUnlockingJourney(false);
+  };
 
   return (
     <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font, padding:"40px 20px 100px", boxSizing:"border-box" }}>
       <div style={{ maxWidth:"480px", margin:"0 auto" }}>
-        <button type="button" onClick={() => (panel === "list" ? setScreen("home") : (setPanel("list"), setSelectedId(null), setJustFinished(null)))} style={{ background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"20px", marginBottom:"20px", padding:"4px 8px 4px 0" }}>
+        <button type="button" onClick={() => (panel === "list" ? setScreen("home") : resetToList())} style={{ background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"20px", marginBottom:"20px", padding:"4px 8px 4px 0" }}>
           ←
         </button>
         <Label text="Grow" color={C.sage} font={font} />
         <h1 style={{ color:C.textPrimary, fontSize:"clamp(22px,5vw,28px)", fontWeight:"normal", margin:"6px 0 8px" }}>Seasonal Journeys</h1>
         <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 24px" }}>
-          Fourteen days — one step per day. Pick a path; your progress is saved on this device and in the cloud when you sync.
+          Start with one of three paths. Choose 7 or 14 days, then move one step at a time.
         </p>
+        {unlockMsg && panel === "list" && (
+          <p style={{ color:C.sage, fontSize:"11px", fontStyle:"italic", margin:"0 0 14px" }}>{unlockMsg}</p>
+        )}
 
         {panel === "list" && (
           <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
-            {SEASONAL_JOURNEYS.map((j) => {
+            {allJourneys.map((j) => {
               const p = getProg(j.id);
               const done = isJourneyDone(j.id);
               const active = journeyProgress.activeId === j.id;
+              const len = p.length;
+              const total = len || (j.generated ? j.steps.length : null);
               return (
                 <button
                   key={j.id}
@@ -12017,7 +12210,7 @@ function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgres
                       <p style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic", margin:0, lineHeight:1.5 }}>{j.subtitle}</p>
                     </div>
                     <span style={{ color:done ? C.sage : C.textMuted, fontSize:"10px", letterSpacing:"1px", whiteSpace:"nowrap" }}>
-                      {done ? "Complete" : `${p.completed}/14`}
+                      {done ? "Complete" : total ? `${p.completed}/${total}` : "Choose length"}
                     </span>
                   </div>
                   {active && !done && (
@@ -12029,11 +12222,22 @@ function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgres
           </div>
         )}
 
+        {panel === "length" && pendingLengthId && (
+          <div style={{ background:C.bgSecondary, border:`1px solid ${C.border}`, borderRadius:"12px", padding:"20px" }}>
+            <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", margin:"0 0 10px" }}>Before you begin</p>
+            <h2 style={{ color:C.textPrimary, fontSize:"clamp(18px,4vw,22px)", fontWeight:"normal", margin:"0 0 16px" }}>How long is this journey?</h2>
+            <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+              <button type="button" onClick={() => activateJourney(pendingLengthId, 7)} style={{ width:"100%", background:C.bgPrimary, border:`1px solid ${C.border}`, borderRadius:"8px", padding:"14px 16px", cursor:"pointer", textAlign:"left", color:C.textPrimary, fontSize:"14px", fontFamily:font }}>7 Days</button>
+              <button type="button" onClick={() => activateJourney(pendingLengthId, 14)} style={{ width:"100%", background:C.bgPrimary, border:`1px solid ${C.border}`, borderRadius:"8px", padding:"14px 16px", cursor:"pointer", textAlign:"left", color:C.textPrimary, fontSize:"14px", fontFamily:font }}>14 Days</button>
+            </div>
+          </div>
+        )}
+
         {panel === "step" && journey && step && (
           <div>
             <div style={{ marginBottom:"16px" }}>
               <p style={{ color:C.sage, fontSize:"9px", letterSpacing:"3px", textTransform:"uppercase", fontStyle:"italic", margin:"0 0 8px" }}>
-                Day {prog.completed + 1} of 14
+                Day {prog.completed + 1} of {totalDays}
               </p>
               <div style={{ height:"8px", background:C.bgSecondary, borderRadius:"8px", overflow:"hidden", border:`1px solid ${C.border}` }}>
                 <div style={{ width:`${pct}%`, height:"100%", background:C.sage, transition:"width 0.4s ease" }} />
@@ -12042,7 +12246,9 @@ function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgres
             </div>
             <div style={{ background:`${C.sage}08`, border:`1.5px solid ${C.sage}33`, borderRadius:"12px", padding:"20px", marginBottom:"20px" }}>
               <h2 style={{ color:C.textPrimary, fontSize:"clamp(17px,4vw,20px)", fontWeight:"normal", margin:"0 0 14px", lineHeight:1.35 }}>{step.title}</h2>
-              <p style={{ color:C.accent, fontSize:"12px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 16px", borderLeft:`3px solid ${C.accent}44`, paddingLeft:"12px" }}>{step.quote}</p>
+              {!!step.quote && (
+                <p style={{ color:C.accent, fontSize:"12px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 16px", borderLeft:`3px solid ${C.accent}44`, paddingLeft:"12px" }}>{step.quote}</p>
+              )}
               <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic", lineHeight:"1.9", margin:"0 0 14px" }}>{step.prompt}</p>
               {step.action && (
                 <div style={{ background:`${C.terra}08`, borderRadius:"8px", padding:"12px 14px", border:`1px solid ${C.terra}22` }}>
@@ -12051,7 +12257,7 @@ function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgres
                 </div>
               )}
             </div>
-            {prog.lastDate === todayStr && prog.completed < 14 && (
+            {prog.lastDate === todayStr && prog.completed < totalDays && (
               <p style={{ color:C.textMuted, fontSize:"12px", fontStyle:"italic", textAlign:"center", marginBottom:"16px" }}>You’ve completed today’s step. Come back tomorrow for the next.</p>
             )}
             <button
@@ -12073,7 +12279,7 @@ function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgres
                 fontStyle:"italic",
               }}
             >
-              {prog.lastDate === todayStr && prog.completed > 0 && prog.completed < 14 ? "Done for today" : prog.completed === 0 && prog.lastDate === null ? "Complete day 1" : "Mark today’s step complete"}
+              {prog.lastDate === todayStr && prog.completed > 0 && prog.completed < totalDays ? "Done for today" : prog.completed === 0 && prog.lastDate === null ? "Complete day 1" : "Mark today’s step complete"}
             </button>
           </div>
         )}
@@ -12083,24 +12289,25 @@ function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgres
             <div style={{ fontSize:"40px", marginBottom:"12px" }}>✓</div>
             <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", margin:"0 0 8px" }}>Finished</p>
             <p style={{ color:C.textPrimary, fontSize:"18px", fontFamily:font, margin:"0 0 8px" }}>{journey.title}</p>
-            <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:1.8, margin:0 }}>You walked all fourteen days. The badge for this journey is in Progress.</p>
+            <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:1.8, margin:0 }}>You completed this path. Your progress is saved.</p>
           </div>
         )}
 
-        {panel === "done" && justFinished && (
+        {panel === "doneBadge" && justFinished && (
           <div style={{ textAlign:"center", padding:"24px 0" }}>
-            <div style={{ fontSize:"48px", marginBottom:"16px" }}>🗺️</div>
+            <div style={{ fontSize:"48px", marginBottom:"16px" }}>🏅</div>
             <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", margin:"0 0 12px" }}>Journey complete</p>
-            <h2 style={{ color:C.textPrimary, fontSize:"clamp(20px,5vw,24px)", fontWeight:"normal", margin:"0 0 12px", lineHeight:1.35 }}>{justFinished.title}</h2>
+            <h2 style={{ color:C.textPrimary, fontSize:"clamp(20px,5vw,24px)", fontWeight:"normal", margin:"0 0 10px", lineHeight:1.35 }}>
+              Congratulations — {justFinished.title}
+            </h2>
             <p style={{ color:C.textSoft, fontSize:"14px", fontStyle:"italic", lineHeight:"1.9", margin:"0 0 24px" }}>
-              Fourteen days of showing up — that is no small thing. A new milestone badge is waiting for you on your Progress screen.
+              You didn't just finish a journey. You walked through something real.
             </p>
             <button
               type="button"
-              onClick={() => {
-                setJustFinished(null);
-                setSelectedId(null);
-                setPanel("list");
+              onClick={async () => {
+                setPanel("doneReflection");
+                await loadCompletionReflection(justFinished);
               }}
               style={{
                 background:C.sage,
@@ -12116,7 +12323,40 @@ function JourneysScreen({ C, font, setScreen, journeyProgress, setJourneyProgres
                 fontStyle:"italic",
               }}
             >
-              Back to journeys
+              Continue
+            </button>
+          </div>
+        )}
+
+        {panel === "doneReflection" && justFinished && (
+          <div style={{ background:C.bgSecondary, border:`1px solid ${C.border}`, borderRadius:"12px", padding:"20px" }}>
+            <p style={{ color:C.sage, fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", margin:"0 0 10px" }}>Completion reflection</p>
+            <h3 style={{ color:C.textPrimary, fontSize:"clamp(18px,4.5vw,22px)", fontWeight:"normal", margin:"0 0 12px" }}>
+              A word for you, {safeName}.
+            </h3>
+            <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:1.9, margin:"0 0 22px" }}>
+              {loadingReflection ? "Writing something personal for this moment..." : (completionReflection || "You stayed with the hard parts and let grace meet you there.")}
+            </p>
+            <button
+              type="button"
+              onClick={unlockPersonalizedJourney}
+              disabled={unlockingJourney}
+              style={{
+                width:"100%",
+                background:unlockingJourney ? C.bgCard : C.sage,
+                border:`1px solid ${unlockingJourney ? C.border : C.sage}`,
+                borderRadius:"3px",
+                color:unlockingJourney ? C.textMuted : "#fff",
+                fontSize:"10px",
+                letterSpacing:"3px",
+                textTransform:"uppercase",
+                padding:"14px 18px",
+                cursor:unlockingJourney ? "default" : "pointer",
+                fontFamily:font,
+                fontStyle:"italic",
+              }}
+            >
+              {unlockingJourney ? "Unlocking your next journey..." : "Continue"}
             </button>
           </div>
         )}
@@ -15088,13 +15328,13 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
       monthly:12, annual:80,
       color:C.amber, badge:"Most Popular",
       tagline:"Selah starts to know you. Growth gets personal.",
-      features:["5 AI reflections per day","Everything in Foundation","Armor Up morning routine","Wind Down sleep routine","Progress tracker & growth insights","Resources — books & wisdom","Personalized check-in questions","Weekly recap email","AI tone & faith customization","Monthly Wellness Goal","Growth Mirror & AI observations"],
+      features:["5 AI reflections per day","Everything in Foundation","Seasonal Journeys — 3 paths, AI-personalized unlocks","Armor Up morning routine","Wind Down sleep routine","Progress tracker & growth insights","Resources — books & wisdom","Personalized check-in questions","Weekly recap email","AI tone & faith customization","Monthly Wellness Goal","Growth Mirror & AI observations"],
       locked:[]},
     {id:"deep",name:"Deep Reflection",
       monthly:15, annual:100,
       color:C.terra, badge:"Best Value",
       tagline:"Your personal spiritual coach. Nothing held back.",
-      features:["Unlimited AI reflections","Everything in Growth","Know Yourself — AI personality assessment","Pattern detection across sessions","Guided challenges (7, 14, 30-day)","Exclusive AI tones (Mentor, Coach)","Extended memory portrait (30 sessions)","Self-discovery assessments","Priority responses & early access"],
+      features:["Unlimited AI reflections","Everything in Growth","Seasonal Journeys — 3 paths, AI-personalized unlocks","Know Yourself — AI personality assessment","Pattern detection across sessions","Guided challenges (7, 14, 30-day)","Exclusive AI tones (Mentor, Coach)","Extended memory portrait (30 sessions)","Self-discovery assessments","Priority responses & early access"],
       locked:[]},
   ];
 
@@ -15119,6 +15359,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
     { feature:"AI Tone & Faith Settings",     free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
     { feature:"Monthly Wellness Goal",        free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
     { feature:"Growth Mirror & Observations", free:"—",       foundation:"—",         growth:"✓",          deep:"✓" },
+    { feature:"Journeys",                     free:"—",       foundation:"—",         growth:"✓ 3 journeys + AI unlocks", deep:"✓ 3 journeys + AI unlocks + personalized" },
     { feature:"Self-Discovery Assessments",   free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
     { feature:"Know Yourself (AI Test)",      free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
     { feature:"Pattern Detection",            free:"—",       foundation:"—",         growth:"—",          deep:"✓" },
@@ -16435,6 +16676,7 @@ useEffect(() => {
         activeId: d.activeId ?? null,
         byJourney: d.byJourney && typeof d.byJourney === "object" ? d.byJourney : {},
         completed: Array.isArray(d.completed) ? d.completed : [],
+        customJourneys: Array.isArray(d.customJourneys) ? d.customJourneys : [],
       };
     }
     return defaultJourneyProgress();
@@ -17131,7 +17373,11 @@ useEffect(() => {
           benchItems={benchItems} setBenchItems={setBenchItems}/>;
       }
       case "journeys": {
-        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation || isTrialActive) {
+        if (isTrialActive) {
+          setScreen("home");
+          return null;
+        }
+        if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.growth) {
           return (
             <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
               padding:"60px 20px", boxSizing:"border-box" }}>
@@ -17140,11 +17386,11 @@ useEffect(() => {
                   cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
                 <UpgradeGate C={C} font={font}
                   feature="Seasonal Journeys"
-                  requiredTier="foundation"
+                  requiredTier="growth"
                   onUpgrade={()=>setShowSub(true)}/>
                 <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
                   textAlign:"center", lineHeight:"1.8", marginTop:"16px" }}>
-                  Fourteen-day guided paths — paid Foundation+ and above. Trial unlocks many features; journeys stay a subscriber gift.
+                  Journeys are available on Growth and above.
                 </p>
               </div>
             </div>
@@ -17152,7 +17398,8 @@ useEffect(() => {
         }
         return (
           <JourneysScreen C={SC} font={font} setScreen={setScreen}
-            journeyProgress={journeyProgress} setJourneyProgress={setJourneyProgress} />
+            journeyProgress={journeyProgress} setJourneyProgress={setJourneyProgress}
+            onboardingAnswers={onboardingAnswers} faithLevel={faithLevel} />
         );
       }
       case "armorup": {
