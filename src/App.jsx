@@ -928,14 +928,6 @@ function urlBase64ToUint8Array(base64String) {
 }
 const isCrisis = t => CRISIS_WORDS.some(k => t.toLowerCase().includes(k));
 
-const LATE_NIGHT_LINES = [
-  "Still awake. You don't have to explain it.",
-  "Whatever brought you here — you don't have to carry it alone tonight.",
-  "It's quiet. That's okay. I'm here.",
-  "You opened this for a reason. Take your time.",
-  "No pressure to say anything. Just breathe for a second.",
-];
-
 // ═══════════════════════════════════════════════════════
 // SHARED COMPONENTS
 // ═══════════════════════════════════════════════════════
@@ -3025,59 +3017,6 @@ function OnboardingScreen({ onDone, C, font }) {
           </button>
         )}
       </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// LATE NIGHT PRESENCE
-// ═══════════════════════════════════════════════════════
-function LateNightModal({ onEnter, onDismiss, C, font }) {
-  const [vis,setVis]=useState(false);
-  const line=LATE_NIGHT_LINES[Math.floor(Math.random()*LATE_NIGHT_LINES.length)];
-  useEffect(()=>{ setTimeout(()=>setVis(true),80); },[]);
-  return (
-    <div style={{ position:"fixed",inset:0,
-      background:C.id==="navy"||C.id==="charcoal"||C.id==="masculine"?"rgba(0,0,0,0.85)":"rgba(26,23,20,0.92)",
-      display:"flex",alignItems:"center",justifyContent:"center",
-      zIndex:400,padding:"32px",fontFamily:font,
-      opacity:vis?1:0,transition:"opacity 0.8s ease" }}>
-      <div style={{ maxWidth:"340px",width:"100%",textAlign:"center" }}>
-        <div style={{ display:"flex",justifyContent:"center",marginBottom:"32px" }}>
-          {[0,1,2].map(i=>(
-            <div key={i} style={{ position:"absolute",
-              width:"80px",height:"48px",borderRadius:"50%",
-              background:`${C.accent}${["18","10","06"][i]}`,
-              animation:`breathe 4s ease-in-out infinite`,
-              animationDelay:`${i*0.6}s` }}/>
-          ))}
-          <div style={{ position:"relative",zIndex:1,paddingTop:"8px" }}>
-            <WaveLogo size={40} color={C.accent}/>
-          </div>
-        </div>
-        <p style={{ color:"rgba(240,235,224,0.9)",fontSize:"clamp(16px,4vw,20px)",
-          fontStyle:"italic",lineHeight:"1.9",margin:"0 0 32px",
-          animation:"fadeUp 1s ease 0.4s both" }}>
-          "{line}"
-        </p>
-        <div style={{ display:"flex",gap:"10px",justifyContent:"center",
-          animation:"fadeUp 0.8s ease 0.9s both" }}>
-          <button onClick={onDismiss} style={{ background:"none",
-            border:"1px solid rgba(240,235,224,0.2)",borderRadius:"3px",
-            color:"rgba(240,235,224,0.5)",fontSize:"9px",letterSpacing:"3px",
-            textTransform:"uppercase",padding:"12px 20px",cursor:"pointer",
-            fontFamily:font,fontStyle:"italic" }}>Just browsing</button>
-          <button onClick={onEnter} style={{ background:C.accent,border:"none",
-            borderRadius:"3px",color:"#fff",fontSize:"9px",letterSpacing:"3px",
-            textTransform:"uppercase",padding:"12px 24px",cursor:"pointer",
-            fontFamily:font,fontStyle:"italic",
-            boxShadow:`0 2px 16px ${C.accent}44` }}>I need a moment</button>
-        </div>
-      </div>
-      <style>{`
-        @keyframes breathe{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.18);opacity:0.6}}
-        @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
-      `}</style>
     </div>
   );
 }
@@ -6803,14 +6742,13 @@ function GuidedTour({ C, font, onDismiss, onGoToSettings, setScreen }) {
 // ═══════════════════════════════════════════════════════
 // HOME SCREEN
 // ═══════════════════════════════════════════════════════
-function HomeScreen({ C, font, setScreen, userName, steadyDays, showLateNight, sharingEnabled, onboardingAnswers, faithLevel, isFirstVisit, onDismissWelcome, onLogMood, onActive, lastFeedbackPrompt, onDismissFeedback, sessionCount, tone, quoteFreq, tier, isTrialActive, onUpgrade, moodHistory, sessionHistory, journalEntries, setJournalEntries, seasonalMode, setSeasonalMode, currentSeason, graceUsedWeek, weeklyGraceBudget, showTutorial, setShowTutorial }) {
+function HomeScreen({ C, font, setScreen, userName, steadyDays, sharingEnabled, onboardingAnswers, faithLevel, isFirstVisit, onDismissWelcome, onLogMood, onActive, lastFeedbackPrompt, onDismissFeedback, sessionCount, tone, quoteFreq, tier, isTrialActive, onUpgrade, moodHistory, sessionHistory, journalEntries, setJournalEntries, seasonalMode, setSeasonalMode, currentSeason, graceUsedWeek, weeklyGraceBudget, showTutorial, setShowTutorial }) {
   const [quote,setQuote]=useState(null);
   const [loading,setLoading]=useState(true);
   const [copied,setCopied]=useState(false);
   const [mood,setMood]=useState(null);
   const [pulseEnergy,setPulseEnergy]=useState(null);
   const [pulseWord,setPulseWord]=useState("");
-  const [showLN,setShowLN]=useState(false);
   const [showCrisisPanel,setShowCrisisPanel]=useState(false);
   const [showNotifications,setShowNotifications]=useState(false);
   const [notifications,setNotifications]=useState([]);
@@ -7490,11 +7428,6 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
     loadQuote();
     try { localStorage.setItem("selah_last_quote", String(Date.now())); } catch {}
   },[]);
-  useEffect(()=>{
-    const hr=new Date().getHours();
-    if((hr>=22||hr<5)&&showLateNight&&!isFirstVisit){ setTimeout(()=>setShowLN(true),1200); }
-  },[]);
-
   // Monthly Pulse Report — Growth+ only, generated on the 1st
   useEffect(()=>{
     const canReport = (TIER_LEVELS[tier]||0) >= TIER_LEVELS.growth;
@@ -8719,9 +8652,6 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
       {showFeedbackPopup&&!showTutorial&&<FeedbackPopup C={C} font={font}
         onGoToFeedback={()=>{setShowFeedbackPopup(false);if(onDismissFeedback)onDismissFeedback();setScreen("feedback");}}
         onDismiss={()=>{setShowFeedbackPopup(false);if(onDismissFeedback)onDismissFeedback();}}/>}
-      {showLN&&<LateNightModal C={C} font={font}
-        onEnter={()=>{setShowLN(false);setScreen("reflect");}}
-        onDismiss={()=>setShowLN(false)}/>}
       <style>{`@keyframes pulse{0%,100%{transform:scale(1);opacity:.4}50%{transform:scale(1.3);opacity:1}}`}</style>
     </div>
   );
@@ -16969,7 +16899,6 @@ useEffect(() => {
   const [tone, setTone] = useState(has("tone") ? saved.tone : "direct");
   const [quoteFreq, setQuoteFreq] = useState(has("quoteFreq") ? saved.quoteFreq : "daily");
   const [seasonalMode, setSeasonalMode] = useState(has("seasonalMode") ? saved.seasonalMode : false);
-  const [showLateNight, setShowLateNight] = useState(true);
   const [onboardingAnswers, setOnboardingAnswers] = useState(has("onboardingAnswers") ? saved.onboardingAnswers : {});
   const [isFirstVisit, setIsFirstVisit] = useState(has("isFirstVisit") ? saved.isFirstVisit : true);
   const [showTutorial, setShowTutorial] = useState(has("isFirstVisit") ? saved.isFirstVisit : true);
@@ -17532,7 +17461,7 @@ useEffect(() => {
       case "home": return (
         <HomeScreen C={SC} font={font} setScreen={setScreen}
           userName={userName} steadyDays={steadyDays}
-          showLateNight={showLateNight} sharingEnabled={sharingEnabled}
+          sharingEnabled={sharingEnabled}
           onboardingAnswers={onboardingAnswers} faithLevel={faithLevel}
           isFirstVisit={isFirstVisit} onDismissWelcome={()=>{setIsFirstVisit(false);setShowTutorial(false);}}
           showTutorial={showTutorial && appLockOnboardingDone} setShowTutorial={setShowTutorial}
