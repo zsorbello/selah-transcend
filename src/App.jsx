@@ -8020,6 +8020,7 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
           void missionUiRev;
           const ms = getMissionHomeState();
           if (!ms.show) return null;
+          if (!isTrialActive) return null;
           const tasks = ms.tasks;
           const hasF = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation || isTrialActive;
           const day5Short = hasF ? "Biblical" : "Heavy Day";
@@ -8738,11 +8739,15 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
             {icon:"📖",label:"Resources",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"Books & wisdom",bg:`${C.amber}12`,color:C.amber,border:`${C.amber}20`,screen:"resources"},
             {icon:"📊",label:"Progress",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.growth?"🔒 Growth+":"Your growth",bg:`${C.sageLight}25`,color:C.sageDark,border:`${C.sage}22`,screen:"progress"},
             {icon:"🧩",label:"Assessments",sub:"Know yourself",bg:`${C.accent}12`,color:C.accent,border:`${C.accent}20`,screen:"assessments"},
+            {icon:"🪞",label:"Know Yourself",sub:(TIER_LEVELS[tier]||0)<TIER_LEVELS.deep?"🔒 Deep":"Discover who you are.",bg:`${C.accent}12`,color:C.accent,border:`${C.accent}20`,screen:"assessments",openKnowYourself:true},
           ].filter(Boolean).map(item=>(
             <button key={item.label} onClick={()=>{
               if(item.screen==="_crisis"){ setShowCrisisPanel(true); return; }
               // If sub shows lock, block navigation and show upgrade
               if(item.sub && item.sub.startsWith("🔒")){ onUpgrade(); return; }
+              if (item.openKnowYourself) {
+                try { localStorage.setItem("selah_open_know_yourself", "1"); } catch {}
+              }
               setScreen(item.screen);
             }} style={{
               background:item.bg,border:`1px solid ${item.border}`,
@@ -15815,6 +15820,15 @@ function AssessmentsScreen({ C, font, setScreen, assessmentResults, setAssessmen
   const tests = Object.values(ASSESSMENTS);
   const canAccessDeep = hasAccess(tier, "deep", isTrialActive);
   const kyResult = assessmentResults?.knowYourself;
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("selah_open_know_yourself") === "1") {
+        localStorage.removeItem("selah_open_know_yourself");
+        if (canAccessDeep) setShowKnowYourself(true);
+      }
+    } catch {}
+  }, [canAccessDeep]);
 
   if (showKnowYourself) {
     return <KnowYourselfQuiz C={C} font={font} userName={userName}
