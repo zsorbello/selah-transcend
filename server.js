@@ -1,4 +1,4 @@
-﻿import cors from 'cors';
+import cors from 'cors';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,6 +15,9 @@ import pushSubscribe from './api/push-subscribe.js';
 import stripePortal from './api/stripe-portal.js';
 import stripeWebhook from './api/stripe-webhook.js';
 import sync from './api/sync.js';
+import admin from './api/admin.js';
+import weeklyRecap from './api/weekly-recap.js';
+import patternDetection from './api/pattern-detection.js';
 import verifyPayment from './api/verify-payment.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +44,9 @@ app.all('/api/stripe-portal', stripePortal);
 app.all('/api/stripe-webhook', stripeWebhook);
 app.all('/api/sync', sync);
 app.all('/api/verify-payment', verifyPayment);
+app.all('/api/admin', admin);
+app.all('/api/weekly-recap', weeklyRecap);
+app.all('/api/pattern-detection', patternDetection);
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
