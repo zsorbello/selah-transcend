@@ -1213,7 +1213,7 @@ function UpgradeGate({ C, font, feature, requiredTier, onUpgrade }) {
 
 /** Main `screen` ids where the fixed bottom nav is omitted (typing / focus UX). */
 const HIDE_BOTTOM_NAV_SCREENS = new Set([
-  "breathe", "checkin", "bestill", "armorup", "prayerwall", "bench",
+  "breathe", "checkin", "bestill", "armorup", "prayerwall", "prayerwallselector", "thewall", "lamentmode", "bench",
   "reflect", "guidedprayer", "journal", "letters", "heavyday",
 ]);
 
@@ -6502,7 +6502,7 @@ function GuidedTour({ C, font, onDismiss, onGoToSettings, setScreen }) {
           ))}
         </div>
       ),
-      action: { label:"Visit The Wall", fn:()=>{ onDismiss(); setScreen("prayerwall"); } },
+      action: { label:"Visit The Wall", fn:()=>{ onDismiss(); setScreen("prayerwallselector"); } },
     },
     {
       icon: "🫁",
@@ -8505,7 +8505,7 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
 
         <Label text="Your Space" color={C.terra} font={font}/>
         {/* Prayer Wall — bold full-width entry */}
-        <button onClick={()=>setScreen("prayerwall")} style={{
+        <button onClick={()=>setScreen("prayerwallselector")} style={{
           width:"100%", background:`linear-gradient(135deg, ${C.amber}18 0%, ${C.terra}12 100%)`,
           border:`1.5px solid ${C.amber}44`, borderRadius:"12px",
           padding:"18px 20px", cursor:"pointer", textAlign:"left",
@@ -12063,7 +12063,7 @@ function PrayerWallScreen({ C, font, onClose, tier, isTrialActive, onUpgrade }) 
       <div style={{ maxWidth:"480px", margin:"0 auto", padding:"20px 20px 120px", boxSizing:"border-box" }}>
         <div style={{ textAlign:"center", marginBottom:"28px" }}>
           <div style={{ fontSize:"36px", marginBottom:"12px" }}>🕯️</div>
-          <h1 style={{ color:C.textPrimary, fontSize:"clamp(20px,5vw,26px)", fontWeight:"normal", margin:"0 0 8px" }}>The Wall</h1>
+          <h1 style={{ color:C.textPrimary, fontSize:"clamp(20px,5vw,26px)", fontWeight:"normal", margin:"0 0 8px" }}>Prayer Wall</h1>
           <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic", lineHeight:"1.9", margin:0 }}>
             No names. No comments. Just prayers going up and people holding each other.
           </p>
@@ -12162,6 +12162,272 @@ function PrayerWallScreen({ C, font, onClose, tier, isTrialActive, onUpgrade }) 
         <p style={{ color:C.textMuted, fontSize:"10px", fontStyle:"italic", textAlign:"center", marginTop:"24px", lineHeight:"1.8" }}>
           Prayers older than 7 days roll off the wall automatically.
         </p>
+      </div>
+    </div>
+  );
+}
+
+function PrayerWallSelectorScreen({ C, font, onClose, onGoPrayerWall, onGoTheWall, tier, isTrialActive, onUpgrade }) {
+  const paidFoundationPlus = (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !isTrialActive;
+
+  if (!paidFoundationPlus) {
+    return (
+      <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font, boxSizing:"border-box" }}>
+        <div style={{ maxWidth:"480px", margin:"0 auto", padding:"20px 20px 120px", boxSizing:"border-box" }}>
+          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"20px", marginBottom:"16px" }}>←</button>
+          <UpgradeGate C={C} font={font}
+            feature="Prayer Wall and The Wall"
+            requiredTier="foundation"
+            onUpgrade={onUpgrade}/>
+          <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic", lineHeight:"1.8", textAlign:"center", marginTop:"16px" }}>
+            Community walls are available on Foundation, Growth, and Deep. Trials are view-only and do not include wall access.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const cardStyle = {
+    background:C.bgSecondary,
+    border:`1px solid ${C.border}`,
+    borderRadius:"12px",
+    padding:"18px",
+    marginBottom:"12px",
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font, boxSizing:"border-box" }}>
+      <div style={{ maxWidth:"520px", margin:"0 auto", padding:"20px 20px 120px", boxSizing:"border-box" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px" }}>
+          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"20px" }}>←</button>
+          <span style={{ color:C.amber, fontSize:"9px", letterSpacing:"3px", textTransform:"uppercase" }}>Community</span>
+          <div style={{ width:"28px" }}/>
+        </div>
+
+        <div style={cardStyle}>
+          <p style={{ color:C.textPrimary, fontSize:"20px", fontWeight:"normal", margin:"0 0 8px" }}>Prayer Wall</p>
+          <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 16px" }}>
+            Share a prayer request with the Selah community. Your post is anonymous and private to Selah users only.
+          </p>
+          <button onClick={onGoPrayerWall} style={{
+            background:C.amber, border:"none", borderRadius:"3px",
+            color:"#fff", fontSize:"10px", letterSpacing:"2.5px",
+            textTransform:"uppercase", padding:"12px 20px", cursor:"pointer",
+            fontFamily:font,
+          }}>
+            Go to Prayer Wall
+          </button>
+        </div>
+
+        <div style={cardStyle}>
+          <p style={{ color:C.textPrimary, fontSize:"20px", fontWeight:"normal", margin:"0 0 8px" }}>The Wall</p>
+          <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 16px" }}>
+            Post one honest sentence about what you&apos;re carrying. No responses. No likes. Just space to be heard. Your post is anonymous and private.
+          </p>
+          <button onClick={onGoTheWall} style={{
+            background:C.terra, border:"none", borderRadius:"3px",
+            color:"#fff", fontSize:"10px", letterSpacing:"2.5px",
+            textTransform:"uppercase", padding:"12px 20px", cursor:"pointer",
+            fontFamily:font,
+          }}>
+            Go to The Wall
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TheWallScreen({ C, font, onClose }) {
+  const [text, setText] = useState("");
+  const [posts, setPosts] = useState(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("selah_the_wall_posts") || "[]");
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .map((p) => ({
+          id: p?.id || `${p?.ts || Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          text: String(p?.text || "").trim().slice(0, 280),
+          ts: Number(p?.ts) || Date.now(),
+        }))
+        .filter((p) => p.text)
+        .sort((a, b) => b.ts - a.ts);
+    } catch {
+      return [];
+    }
+  });
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const closeTimerRef = useRef(null);
+  const MAX_CHARS = 280;
+
+  useEffect(() => () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+  }, []);
+
+  const savePosts = (nextPosts) => {
+    try {
+      localStorage.setItem("selah_the_wall_posts", JSON.stringify(nextPosts.slice(0, 300)));
+    } catch {}
+  };
+
+  const submitPost = () => {
+    if (!text.trim() || submitting || submitted) return;
+    setSubmitting(true);
+    const cleanText = text.trim().replace(/\s+/g, " ").slice(0, MAX_CHARS);
+    if (!cleanText) {
+      setSubmitting(false);
+      return;
+    }
+    const entry = { id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, text: cleanText, ts: Date.now() };
+    const next = [entry, ...posts].sort((a, b) => b.ts - a.ts);
+    setPosts(next);
+    savePosts(next);
+    setText("");
+    setSubmitted(true);
+    setSubmitting(false);
+    closeTimerRef.current = setTimeout(() => onClose(), 3000);
+  };
+
+  const timeAgo = (ts) => {
+    const mins = Math.floor((Date.now() - ts) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#0A0A0A", fontFamily:font, boxSizing:"border-box" }}>
+      <div style={{ padding:"20px 20px 0", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:C.textMuted, fontSize:"20px" }}>←</button>
+        <span style={{ color:C.textMuted, fontSize:"9px", letterSpacing:"3px", textTransform:"uppercase" }}>The Wall</span>
+        <div style={{ width:"28px" }}/>
+      </div>
+
+      <div style={{ maxWidth:"520px", margin:"0 auto", padding:"20px 20px 120px", boxSizing:"border-box" }}>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value.slice(0, MAX_CHARS))}
+          placeholder="One honest sentence."
+          style={{ width:"100%", minHeight:"110px", background:"#111111", border:"1px solid #2A2A2A",
+            borderRadius:"10px", padding:"14px", color:"#ECECEC", fontSize:"14px", fontFamily:font,
+            lineHeight:"1.8", resize:"vertical", outline:"none", boxSizing:"border-box", marginBottom:"8px" }}
+        />
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
+          <span style={{ color:"#888", fontSize:"10px" }}>{text.length}/{MAX_CHARS}</span>
+          <button onClick={submitPost} disabled={!text.trim() || submitting || submitted} style={{
+            background: text.trim() ? C.terra : "transparent",
+            border:`1px solid ${text.trim() ? C.terra : "#333"}`,
+            borderRadius:"3px", color: text.trim() ? "#fff" : "#777",
+            fontSize:"9px", letterSpacing:"2.5px", textTransform:"uppercase",
+            padding:"10px 14px", cursor: text.trim() ? "pointer" : "default",
+            fontFamily:font,
+          }}>
+            Put it on the wall
+          </button>
+        </div>
+
+        {submitted && (
+          <p style={{ color:"#B6B6B6", fontSize:"13px", fontStyle:"italic", lineHeight:"1.8", margin:"0 0 14px" }}>
+            It&apos;s there. Someone else is carrying something too.
+          </p>
+        )}
+
+        <div style={{ maxHeight:"52vh", overflowY:"auto", display:"flex", flexDirection:"column", gap:"8px", paddingRight:"2px" }}>
+          {posts.map((p) => (
+            <div key={p.id} style={{ background:"#111111", border:"1px solid #252525", borderRadius:"10px", padding:"12px 14px" }}>
+              <p style={{ color:"#ECECEC", fontSize:"13px", fontStyle:"italic", lineHeight:"1.8", margin:"0 0 6px" }}>{p.text}</p>
+              <span style={{ color:"#777", fontSize:"10px" }}>{timeAgo(p.ts)}</span>
+            </div>
+          ))}
+          {posts.length === 0 && (
+            <p style={{ color:"#7E7E7E", fontSize:"12px", fontStyle:"italic", lineHeight:"1.8", margin:"6px 0 0" }}>
+              The wall is quiet right now.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LamentModeScreen({ C, font, onClose }) {
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [response, setResponse] = useState("");
+
+  const submit = async () => {
+    if (!text.trim() || loading) return;
+    setLoading(true);
+    try {
+      const r = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 220,
+          system: "The user is in a moment of raw honesty. They are not looking for solutions or positivity. Acknowledge what they shared directly and honestly. Sit with them in it. Do not try to fix it. Do not offer silver linings. End with one short line of truth — not comfort, truth. Keep the entire response under 5 sentences.",
+          messages: [{ role: "user", content: text.trim() }],
+        }),
+      });
+      const d = await r.json();
+      const aiText = d.content?.map((b) => b.text || "").join("").trim();
+      setResponse(aiText || "This is heavy and it hurts exactly where you are living.\nTruth: this pain is real.");
+    } catch {
+      setResponse("This is heavy and it hurts exactly where you are living.\nTruth: this pain is real.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#060606", color:"#F0F0F0", fontFamily:font, boxSizing:"border-box" }}>
+      <div style={{ maxWidth:"520px", margin:"0 auto", minHeight:"100vh", display:"flex", flexDirection:"column", padding:"36px 22px 28px", boxSizing:"border-box" }}>
+        <button onClick={onClose} style={{ alignSelf:"flex-start", background:"none", border:"none", cursor:"pointer", color:"#8E8E8E", fontSize:"20px", marginBottom:"18px" }}>←</button>
+        <h1 style={{ fontSize:"clamp(24px,6vw,32px)", fontWeight:"normal", margin:"0 0 10px", lineHeight:1.35 }}>
+          This is your space to be honest.
+        </h1>
+        <p style={{ color:"#A8A8A8", fontSize:"13px", fontStyle:"italic", lineHeight:"1.85", margin:"0 0 20px" }}>
+          No performance. No silver lining. Just you and God and what&apos;s actually true right now.
+        </p>
+
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="What are you carrying that you haven't been able to say out loud?"
+          style={{ width:"100%", flex:1, minHeight:"240px", background:"#0F0F0F", color:"#F0F0F0",
+            border:"1px solid #242424", borderRadius:"12px", padding:"16px",
+            fontSize:"14px", fontFamily:font, lineHeight:"1.9", resize:"vertical", outline:"none", boxSizing:"border-box" }}
+        />
+
+        {!response && (
+          <button onClick={submit} disabled={!text.trim() || loading} style={{
+            width:"100%", marginTop:"14px",
+            background: text.trim() && !loading ? C.terra : "#121212",
+            border:`1px solid ${text.trim() && !loading ? C.terra : "#2B2B2B"}`,
+            borderRadius:"3px", color: text.trim() && !loading ? "#fff" : "#7B7B7B",
+            fontSize:"10px", letterSpacing:"2.8px", textTransform:"uppercase",
+            padding:"15px", cursor: text.trim() && !loading ? "pointer" : "default", fontFamily:font,
+          }}>
+            {loading ? "..." : "I said it"}
+          </button>
+        )}
+
+        {response && (
+          <div style={{ marginTop:"16px" }}>
+            <p style={{ color:"#D8D8D8", fontSize:"14px", fontStyle:"italic", lineHeight:"1.9", margin:"0 0 14px", whiteSpace:"pre-line" }}>
+              {response}
+            </p>
+            <button onClick={onClose} style={{
+              background:"none", border:"1px solid #3A3A3A", borderRadius:"999px",
+              color:"#AFAFAF", fontSize:"11px", letterSpacing:"1.4px",
+              padding:"9px 18px", cursor:"pointer", fontFamily:font,
+            }}>
+              Close
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -14290,6 +14556,11 @@ function SettingsScreen({ C, font, setScreen, theme, setTheme, darkMode, setDark
                           guidedPrayerHour: parseInt(pushGuidedPrayerHour, 10),
                           eveningPrayerEnabled: !!pushEveningPrayerEnabled,
                           eveningPrayerHour: parseInt(pushEveningPrayerHour, 10),
+                          lamentModeEnabled: (TIER_LEVELS[tier] || 0) >= TIER_LEVELS.foundation && !(trialDaysLeft > 0),
+                          lamentModeHour: 23,
+                          lamentModeSilent: true,
+                          lamentModeTitle: "Lament Mode",
+                          lamentModeBody: "",
                           tzOffsetMinutes: new Date().getTimezoneOffset(),
                         })
                       });
@@ -16992,6 +17263,9 @@ function SelahAppInner() {
   const [pushEveningPrayerHour, setPushEveningPrayerHour] = useState(
     has("pushEveningPrayerHour") ? normalizeDailyReminderHour(saved.pushEveningPrayerHour) : "21"
   );
+  const [pushLamentModeEnabled, setPushLamentModeEnabled] = useState(
+    has("pushLamentModeEnabled") ? !!saved.pushLamentModeEnabled : true
+  );
   const [dailyReminderHour, setDailyReminderHour] = useState(
     has("dailyReminderHour") ? normalizeDailyReminderHour(saved.dailyReminderHour) : "8"
   );
@@ -17098,6 +17372,7 @@ useEffect(() => {
   const adminMode = isAdminSession();
   const effectiveTier = adminMode ? "deep" : tier;
   const isTrialActive = effectiveTier === "free" && trialDaysLeft > 0;
+  const lamentModeAllowed = (TIER_LEVELS[effectiveTier] || 0) >= TIER_LEVELS.foundation && !isTrialActive;
   const weeklyGraceBudget = weeklyStreakGraceBudget(effectiveTier, isTrialActive);
 
   // ── Streak logic ──
@@ -17263,7 +17538,7 @@ useEffect(() => {
     saveToStorage({
       appScreen: appScreen === "main" ? "main" : appScreen,
       themeId, darkMode, fontId, faithLevel, userName, tier, trialStart, steadyDays, sessionCount,
-      sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour,
+      sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour, pushLamentModeEnabled,
       dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
       journalEntries, moodHistory, lastVisit: Date.now(),
       feedbackEntries, lastFeedbackPrompt,
@@ -17275,7 +17550,7 @@ useEffect(() => {
       const syncData = {
         appScreen: appScreen === "main" ? "main" : appScreen,
         themeId, darkMode, fontId, faithLevel, userName, tier, trialStart, steadyDays, sessionCount,
-        sharingEnabled, pushEnabled, dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
+        sharingEnabled, pushEnabled, pushLamentModeEnabled, dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers, isFirstVisit,
         journalEntries, moodHistory, lastVisit: Date.now(),
         feedbackEntries, lastFeedbackPrompt,
         lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, journeyProgress, sessionHistory, savedReflections, assessmentResults, userEmail, foundingMember, stripeEmail, seasonalMode, benchItems, letters, gratitudeLog,
@@ -17305,7 +17580,7 @@ useEffect(() => {
         });
     }
   }, [appScreen, themeId, darkMode, fontId, faithLevel, userName, tier, trialStart, steadyDays,
-      sessionCount, sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour,
+      sessionCount, sharingEnabled, pushEnabled, pushGuidedPrayerEnabled, pushGuidedPrayerHour, pushEveningPrayerEnabled, pushEveningPrayerHour, pushLamentModeEnabled,
       dailyReminderHour, isMinorUser, tone, quoteFreq, onboardingAnswers,
       isFirstVisit, journalEntries, moodHistory, feedbackEntries, lastFeedbackPrompt,
       lastActiveDate, bestStreak, totalActiveDays, graceUsedWeek, journeyProgress, sessionHistory, savedReflections, assessmentResults, userEmail, foundingMember, stripeEmail, seasonalMode, letters, gratitudeLog,
@@ -17349,6 +17624,11 @@ useEffect(() => {
             guidedPrayerHour: parseInt(pushGuidedPrayerHour, 10),
             eveningPrayerEnabled: !!pushEveningPrayerEnabled,
             eveningPrayerHour: parseInt(pushEveningPrayerHour, 10),
+            lamentModeEnabled: !!(pushLamentModeEnabled && lamentModeAllowed),
+            lamentModeHour: 23,
+            lamentModeSilent: true,
+            lamentModeTitle: "Lament Mode",
+            lamentModeBody: "",
             tzOffsetMinutes: new Date().getTimezoneOffset(),
           }),
         });
@@ -17363,6 +17643,8 @@ useEffect(() => {
     pushGuidedPrayerHour,
     pushEveningPrayerEnabled,
     pushEveningPrayerHour,
+    pushLamentModeEnabled,
+    lamentModeAllowed,
     userEmail,
   ]);
 
@@ -17372,6 +17654,32 @@ useEffect(() => {
       navigator.serviceWorker.register('/sw.js').catch(e => console.error('SW registration failed:', e));
     }
   }, []);
+
+  // Optional deep link entry for Lament Mode (e.g., push click target)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const qp = new URLSearchParams(window.location.search);
+    const screenParam = String(qp.get("screen") || "").toLowerCase();
+    const modeParam = String(qp.get("mode") || "").toLowerCase();
+    const lamentFlag = qp.get("lament") === "1";
+    const hash = String(window.location.hash || "").replace("#", "").toLowerCase();
+    const shouldOpenLament =
+      lamentFlag ||
+      screenParam === "lamentmode" ||
+      modeParam === "lament" ||
+      modeParam === "lamentmode" ||
+      hash === "lament" ||
+      hash === "lamentmode";
+    if (!shouldOpenLament || appScreen !== "main") return;
+    setScreen("lamentmode");
+    try {
+      qp.delete("lament");
+      if (qp.get("screen") && screenParam === "lamentmode") qp.delete("screen");
+      if (qp.get("mode") && (modeParam === "lament" || modeParam === "lamentmode")) qp.delete("mode");
+      const next = `${window.location.pathname}${qp.toString() ? `?${qp.toString()}` : ""}`;
+      window.history.replaceState({}, "", next);
+    } catch {}
+  }, [appScreen]);
 
   // PWA install prompt
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -17773,11 +18081,75 @@ useEffect(() => {
       case "breathe": return <BreathingExercise C={C} font={font}
           showPremiumPractices={(TIER_LEVELS[effectiveTier]||0) >= TIER_LEVELS.foundation && !isTrialActive}
           onSessionComplete={()=>{ try { markMissionTask(4); } catch (e) {} }} onClose={()=>setScreen("home")}/>;
+      case "prayerwallselector":
+        return <PrayerWallSelectorScreen C={SC} font={font}
+          tier={effectiveTier} isTrialActive={isTrialActive}
+          onUpgrade={()=>setShowSub(true)}
+          onGoPrayerWall={()=>setScreen("prayerwall")}
+          onGoTheWall={()=>setScreen("thewall")}
+          onClose={()=>setScreen("home")}/>;
       case "prayerwall":
+        if ((TIER_LEVELS[effectiveTier] || 0) < TIER_LEVELS.foundation || isTrialActive) {
+          return (
+            <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
+              padding:"60px 20px", boxSizing:"border-box" }}>
+              <div style={{ maxWidth:"480px", margin:"0 auto" }}>
+                <button onClick={()=>setScreen("home")} style={{ background:"none",border:"none",
+                  cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
+                <UpgradeGate C={C} font={font}
+                  feature="Prayer Wall"
+                  requiredTier="foundation"
+                  onUpgrade={()=>setShowSub(true)}/>
+                <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
+                  textAlign:"center", lineHeight:"1.8", marginTop:"16px" }}>
+                  Prayer Wall and The Wall are available on Foundation, Growth, and Deep. Trial users can unlock it by upgrading.
+                </p>
+              </div>
+            </div>
+          );
+        }
         return <PrayerWallScreen C={SC} font={font}
           tier={effectiveTier} isTrialActive={isTrialActive}
           onUpgrade={()=>setShowSub(true)}
           onClose={()=>setScreen("home")}/>;
+      case "thewall":
+        if ((TIER_LEVELS[effectiveTier] || 0) < TIER_LEVELS.foundation || isTrialActive) {
+          return (
+            <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
+              padding:"60px 20px", boxSizing:"border-box" }}>
+              <div style={{ maxWidth:"480px", margin:"0 auto" }}>
+                <button onClick={()=>setScreen("home")} style={{ background:"none",border:"none",
+                  cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
+                <UpgradeGate C={C} font={font}
+                  feature="The Wall"
+                  requiredTier="foundation"
+                  onUpgrade={()=>setShowSub(true)}/>
+              </div>
+            </div>
+          );
+        }
+        return <TheWallScreen C={SC} font={font} onClose={()=>setScreen("home")}/>;
+      case "lamentmode":
+        if (!lamentModeAllowed) {
+          return (
+            <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
+              padding:"60px 20px", boxSizing:"border-box" }}>
+              <div style={{ maxWidth:"480px", margin:"0 auto" }}>
+                <button onClick={()=>setScreen("home")} style={{ background:"none",border:"none",
+                  cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
+                <UpgradeGate C={C} font={font}
+                  feature="Lament Mode"
+                  requiredTier="foundation"
+                  onUpgrade={()=>setShowSub(true)}/>
+                <p style={{ color:C.textSoft, fontSize:"12px", fontStyle:"italic",
+                  textAlign:"center", lineHeight:"1.8", marginTop:"16px" }}>
+                  Lament Mode is available on Foundation, Growth, and Deep. Trial users do not receive this notification.
+                </p>
+              </div>
+            </div>
+          );
+        }
+        return <LamentModeScreen C={SC} font={font} onClose={()=>setScreen("home")}/>;
       case "bench": {
         if ((TIER_LEVELS[effectiveTier]||0) < TIER_LEVELS.foundation && !isTrialActive) {
           setScreen("home"); return null;
@@ -17970,6 +18342,7 @@ useEffect(() => {
                   if(cloud.stripeEmail) setStripeEmail(cloud.stripeEmail);
                   if(typeof cloud.foundingMember === "boolean") setFoundingMember(cloud.foundingMember);
                   if (cloud.dailyReminderHour != null) setDailyReminderHour(normalizeDailyReminderHour(cloud.dailyReminderHour));
+                  if (typeof cloud.pushLamentModeEnabled === "boolean") setPushLamentModeEnabled(cloud.pushLamentModeEnabled);
                 }
               }catch{}
               // Also check Stripe directly for active subscription
@@ -18107,6 +18480,7 @@ useEffect(() => {
                 if(typeof cloud.foundingMember === "boolean") setFoundingMember(cloud.foundingMember);
                 if(cloud.steadyDays>steadyDays) setSteadyDays(cloud.steadyDays);
                 if (cloud.dailyReminderHour != null) setDailyReminderHour(normalizeDailyReminderHour(cloud.dailyReminderHour));
+                if (typeof cloud.pushLamentModeEnabled === "boolean") setPushLamentModeEnabled(cloud.pushLamentModeEnabled);
                 if (cloud.journeyProgress?.byJourney || cloud.journeyProgress?.completed?.length)
                   setJourneyProgress((prev) => mergeJourneyProgressState(prev, cloud.journeyProgress));
                 if(cloud.onboardingAnswers?.name){
