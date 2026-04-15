@@ -959,6 +959,7 @@ function Label({ text, color, font }) {
 
 // Tier access helper: returns true if user has access to a given tier level
 const TIER_LEVELS = { free:0, foundation:1, growth:2, deep:3 };
+const PAID_TIERS = new Set(["foundation", "growth", "deep"]);
 
 /** Streak grace days per calendar week (Mon–Sun). Trial/free: none; Foundation/Growth: 1; Deep: 2. */
 function weeklyStreakGraceBudget(tier, isTrialActive) {
@@ -15588,7 +15589,7 @@ function SubscriptionScreen({ C, font, onBack, currentTier, onSelectTier, trialD
       if (d.verified && d.tier) {
         setVerifyStatus("success");
         setTimeout(() => {
-          onSelectTier(d.tier);
+          onSelectTier(d.tier, { verified: true });
           onStripeEmail(email);
           setPaymentPending(false);
           setPendingTier(null);
@@ -17309,7 +17310,7 @@ useEffect(() => {
     fetch(`/api/verify-payment?email=${encodeURIComponent(checkEmail)}`)
       .then(r => r.json())
       .then(d => {
-        if (d.verified && d.tier) {
+        if (d.verified && PAID_TIERS.has(d.tier)) {
           // Subscription still active — update tier in case they upgraded/downgraded
           if (d.tier !== tier) { setTier(d.tier); trackEvent("tier_upgrade", { from: tier, to: d.tier }); }
         } else {
@@ -17318,8 +17319,8 @@ useEffect(() => {
         }
       })
       .catch(() => {
-        // Network error — don't downgrade, keep current tier
-        // Will re-check next time they open the app
+        // Fail closed: if we cannot verify payment, do not keep paid access.
+        setTier("free");
       });
   }, []);
 
@@ -17338,7 +17339,7 @@ useEffect(() => {
         // Check Stripe for active subscription
         fetch(`/api/verify-payment?email=${encodeURIComponent(d.email)}`)
           .then(r=>r.json()).then(pd=>{
-            if(pd.verified&&pd.tier){ setTier(pd.tier); setStripeEmail(d.email); }
+            if(pd.verified && PAID_TIERS.has(pd.tier)){ setTier(pd.tier); setStripeEmail(d.email); }
           }).catch(()=>{});
       } else {
         // Token expired, clear it
@@ -17445,7 +17446,17 @@ useEffect(() => {
       <SubscriptionScreen C={C} font={font}
         onBack={()=>setShowSub(false)}
         currentTier={tier}
-        onSelectTier={(t)=>{setTier(t);setShowSub(false);}}
+        onSelectTier={(t, meta)=>{
+          if (t === "free") {
+            setTier("free");
+            setShowSub(false);
+            return;
+          }
+          if (meta?.verified === true && PAID_TIERS.has(t)) {
+            setTier(t);
+            setShowSub(false);
+          }
+        }}
         trialDaysLeft={trialDaysLeft}
         userEmail={userEmail}
         onStripeEmail={setStripeEmail}
@@ -17835,7 +17846,8 @@ useEffect(() => {
                   if (cloud.journeyProgress?.byJourney || cloud.journeyProgress?.completed?.length)
                     setJourneyProgress((prev) => mergeJourneyProgressState(prev, cloud.journeyProgress));
                   if(cloud.onboardingAnswers&&Object.keys(cloud.onboardingAnswers).length>0&&!onboardingAnswers?.name) setOnboardingAnswers(cloud.onboardingAnswers);
-                  if(cloud.tier&&cloud.tier!=="free") setTier(cloud.tier);
+                  // Never trust paid tier from cloud sync payload.
+                  // Paid access is granted only after /api/verify-payment succeeds.
                   if(cloud.stripeEmail) setStripeEmail(cloud.stripeEmail);
                   if(typeof cloud.foundingMember === "boolean") setFoundingMember(cloud.foundingMember);
                   if (cloud.dailyReminderHour != null) setDailyReminderHour(normalizeDailyReminderHour(cloud.dailyReminderHour));
@@ -17845,7 +17857,7 @@ useEffect(() => {
               try{
                 const pr=await fetch(`/api/verify-payment?email=${encodeURIComponent(d.email)}`);
                 const pd=await pr.json();
-                if(pd.verified&&pd.tier){
+                if(pd.verified && PAID_TIERS.has(pd.tier)){
                   setTier(pd.tier);
                   setStripeEmail(d.email);
                 }
@@ -17963,7 +17975,8 @@ useEffect(() => {
               const sd=await sr.json();
               const cloud = sd?.data ?? sd;
               if(cloud && typeof cloud === "object"){
-                if(cloud.tier&&cloud.tier!=="free") setTier(cloud.tier);
+                // Never trust paid tier from cloud sync payload.
+                // Paid access is granted only after /api/verify-payment succeeds.
                 if(cloud.trialStart) setTrialStart(cloud.trialStart);
                 if(cloud.userName) setUserName(cloud.userName);
                 if(cloud.journalEntries?.length>journalEntries.length) setJournalEntries(cloud.journalEntries);
@@ -17988,7 +18001,7 @@ useEffect(() => {
             try{
               const pr=await fetch(`/api/verify-payment?email=${encodeURIComponent(gateEmail)}`);
               const pd=await pr.json();
-              if(pd.verified&&pd.tier){ setTier(pd.tier); setStripeEmail(gateEmail); }
+              if(pd.verified && PAID_TIERS.has(pd.tier)){ setTier(pd.tier); setStripeEmail(gateEmail); }
             }catch{}
             trackEvent("trial_start");
             setAppScreen("onboarding");
