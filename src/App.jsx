@@ -6839,6 +6839,7 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, showLateNight, s
   const [missionUiRev,setMissionUiRev]=useState(0);
   const [weekInWords, setWeekInWords] = useState(null);
   const [weekInWordsLoading, setWeekInWordsLoading] = useState(false);
+  const [dailyPersonalGreeting, setDailyPersonalGreeting] = useState(null);
 
   // Time of day — living home screen
   const [timeOfDay, setTimeOfDay] = useState(() => {
@@ -6888,6 +6889,45 @@ function HomeScreen({ C, font, setScreen, userName, steadyDays, showLateNight, s
     };
     return (sessionHistory || []).filter((s) => inLast7(s.date)).length >= 3;
   }, [tier, sessionHistory]);
+
+  const versePersonalLine = useMemo(() => buildVerseConnectionLine(onboardingAnswers), [onboardingAnswers]);
+
+  useEffect(() => {
+    try {
+      const dKey = "selah_home_greeting_date";
+      const tKey = "selah_home_greeting_text";
+      const today = new Date().toDateString();
+      if (localStorage.getItem(dKey) === today) {
+        const cached = localStorage.getItem(tKey);
+        if (cached) setDailyPersonalGreeting(cached);
+        return;
+      }
+      const h = new Date().getHours();
+      const name = (userName && String(userName).trim()) || "friend";
+      const carrying = String(onboardingAnswers?.biggest || onboardingAnswers?.needMost || "").trim();
+      const todayStr = new Date().toDateString();
+      const reflectedToday = (sessionHistory || []).some((s) => s?.date && new Date(s.date).toDateString() === todayStr);
+      let line;
+      if (reflectedToday) {
+        line = `You reflected today ${name}. That takes courage.`;
+      } else if (h >= 17 || h < 5) {
+        line = `Good evening ${name}. Take a breath. You showed up today.`;
+      } else if (h >= 5 && h < 12) {
+        line = carrying
+          ? `Good morning ${name}. You said you're carrying ${carrying}. Selah is here for that today.`
+          : `Good morning ${name}. Selah is here for you today.`;
+      } else {
+        line = carrying
+          ? `Good afternoon ${name}. You said you're carrying ${carrying}. Selah is here for that today.`
+          : `Good afternoon ${name}. Selah is here with you.`;
+      }
+      localStorage.setItem(dKey, today);
+      localStorage.setItem(tKey, line);
+      setDailyPersonalGreeting(line);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [userName, onboardingAnswers, sessionHistory]);
 
   useEffect(() => {
     const h = () => setMissionUiRev((r) => r + 1);
@@ -7719,6 +7759,15 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
           </div>
         </div>
 
+        {dailyPersonalGreeting && (
+          <div style={{ background:C.bgSecondary, border:`1px solid ${C.border}`, borderRadius:"10px",
+            padding:"14px 16px", marginBottom:"16px" }}>
+            <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:1.75, margin:0 }}>
+              {dailyPersonalGreeting}
+            </p>
+          </div>
+        )}
+
         {(() => {
           const now = new Date();
           const dayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
@@ -7867,6 +7916,9 @@ Write in second person ("you"). No bullet points. No headings. No therapy jargon
                     {quote.author}
                   </span>
                 </div>
+                <p style={{ color:C.textMuted, fontSize:"11px", fontStyle:"italic", margin:"10px 0 0", lineHeight:1.65 }}>
+                  {versePersonalLine}
+                </p>
               </div>
               {/* Reflection question */}
               {quote.question&&(
@@ -8901,7 +8953,7 @@ function HeavyDayScreen({ C, font, onClose, onHeavyDayComplete, faithLevel, user
   return null;
 }
 
-function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onSessionComplete, onboardingAnswers, userName, isMinorUser, tier, sessionHistory, seasonalContext, setBenchItems, savedReflections, canSavePastReflections, onUpgrade, isTrialActive, moodHistory }) {
+function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onSessionComplete, onboardingAnswers, userName, isMinorUser, tier, sessionHistory, seasonalContext, setBenchItems, savedReflections, canSavePastReflections, onUpgrade, isTrialActive, moodHistory, reflectionHistoryTick = 0, reflectDailyLimit = Infinity, reflectSessionsToday = 0 }) {
   const [phase,setPhase]=useState("entry");
   const [pastDetail,setPastDetail]=useState(null);
   const [cat,setCat]=useState(null);
@@ -9049,6 +9101,27 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
     [tier, isTrialActive, sessionHistory, savedReflections, moodHistory, trialPeakFirst]
   );
 
+  const deepHistoryCtx = useMemo(() => {
+    if (isTrialActive || (TIER_LEVELS[tier] || 0) < TIER_LEVELS.deep) return "";
+    void reflectionHistoryTick;
+    return loadDeepReflectionHistoryPromptBlock();
+  }, [tier, isTrialActive, reflectionHistoryTick]);
+
+  const tierResponseInstruction = (() => {
+    if (isTrialActive) return "RESPONSE SHAPE: Give a warm, helpful 2-3 sentence reflection. Keep it general and encouraging.";
+    const L = TIER_LEVELS[tier] ?? 0;
+    if (L >= TIER_LEVELS.deep) {
+      return "RESPONSE SHAPE: Give a deeply personal 5-6 sentence reflection. You know this person well from their history. Reference past reflections when relevant. Speak to them like someone who has walked with them for 30 days. End with something that will stay with them.";
+    }
+    if (L >= TIER_LEVELS.growth) {
+      return "RESPONSE SHAPE: Give a deep 4-5 sentence reflection. Be personal, reference their onboarding answers, and end with a specific actionable thought for their day.";
+    }
+    if (L >= TIER_LEVELS.foundation) {
+      return "RESPONSE SHAPE: Give a thoughtful 3-4 sentence reflection that references what they shared specifically.";
+    }
+    return "RESPONSE SHAPE: Give a warm, helpful 2-3 sentence reflection. Keep it general and encouraging.";
+  })();
+
   const toneInstruction = {
     direct: "TONE: Be direct, grounded, and honest. Say things like 'What part of that hit you hardest?' and 'You don't have to carry this alone.' Be like a grounded older brother — calm, direct, emotionally literate. Don't over-soften. Get to the point with warmth.",
     warm: "TONE: Be warm, gentle, and conversational. Say things like 'Take your time — what's been weighing on you?' and 'There's no rush here.' Be nurturing and patient. Give space. Lead with empathy before direction. Let them feel safe before you challenge.",
@@ -9068,9 +9141,9 @@ function ReflectScreen({ C, font, setScreen, faithLevel, sessionCount, tone, onS
 
 CRITICAL: You are NOT a therapist, counselor, or medical provider. Never diagnose, prescribe, or provide medical/clinical advice. If someone describes symptoms, encourage them to see a licensed professional. Never claim to replace professional care.
 
-DEPTH & PRESENCE: Most replies should be thoughtful and full — often roughly 4–8 sentences in the body (longer if they are processing something heavy; shorter if they need air). When they share something vulnerable, slow down: reflect back what you heard in your own words so they feel understood, then invite them deeper with a caring follow-up question. Avoid generic encouragement; be specific to their words. Wonder with them; don't rush to fix. Show that you're tracking — ask follow-ups that open the next layer. Embed one clear question in warm prose unless you are closing with SESSION_COMPLETE.${trialPeakFirst ? " For this conversation, lean into unusual depth and specificity — the presence of someone who truly has time for them. Never name tiers, trials, or 'first session'." : ""}
+${tierResponseInstruction} When not closing with SESSION_COMPLETE, let pacing follow RESPONSE SHAPE above; if they are processing something very heavy you may extend slightly within reason. When they share something vulnerable, reflect back what you heard, then invite them deeper. Avoid generic encouragement; be specific to their words. Embed one clear question in warm prose unless you are closing with SESSION_COMPLETE.${trialPeakFirst ? " For this conversation, lean into unusual depth and specificity — the presence of someone who truly has time for them. Never name tiers, trials, or 'first session'." : ""}
 
-WISE COMPANION: Sound like someone who has sat with hard things and paid attention. Be spiritually rich without performing. ${toneInstruction} ${faithLevel>=2?"Let faith and wisdom arise naturally from the conversation.":"Keep faith language minimal unless they lead with it."} ${sessionCount>=10?"They have done many sessions — you can be somewhat more ownership-forward and direct.":"They may be newer — prioritize steadiness and safety first."} ${seasonalContext ? `SEASONAL CONTEXT: ${seasonalContext} Let this subtly shape the themes and questions you offer — don't announce it, just let it inform the texture of the conversation.` : ""} ${onboardCtx ? `IMPORTANT CONTEXT ABOUT THIS PERSON: ${onboardCtx} Use this context to make your responses more personal and relevant — reference their specific struggles and goals naturally, but never make it feel like you're reading from a file. Let it inform how you speak, not what you quote back.` : ""}${memoryCtx ? (trialPeakFirst ? "LONG-TERM MEMORY: The SELAH MEMORY block below matches Deep-tier depth; there is no prior session history — personalize from onboarding and today's words only. Never mention trials, previews, or tiers. Never read it back as a list or dossier. " : "LONG-TERM MEMORY: When a SELAH MEMORY block appears below, it comes from their real reflection history (Foundation+ paid only — not free or trial). Use it to personalize every response; never read it back as a list or dossier. ") : ""}${memoryCtx}${minorSafety}${scriptureInReflect}
+WISE COMPANION: Sound like someone who has sat with hard things and paid attention. Be spiritually rich without performing. ${toneInstruction} ${faithLevel>=2?"Let faith and wisdom arise naturally from the conversation.":"Keep faith language minimal unless they lead with it."} ${sessionCount>=10?"They have done many sessions — you can be somewhat more ownership-forward and direct.":"They may be newer — prioritize steadiness and safety first."} ${seasonalContext ? `SEASONAL CONTEXT: ${seasonalContext} Let this subtly shape the themes and questions you offer — don't announce it, just let it inform the texture of the conversation.` : ""} ${onboardCtx ? `IMPORTANT CONTEXT ABOUT THIS PERSON: ${onboardCtx} Use this context to make your responses more personal and relevant — reference their specific struggles and goals naturally, but never make it feel like you're reading from a file. Let it inform how you speak, not what you quote back.` : ""}${deepHistoryCtx}${memoryCtx ? (trialPeakFirst ? "LONG-TERM MEMORY: The SELAH MEMORY block below matches Deep-tier depth; there is no prior session history — personalize from onboarding and today's words only. Never mention trials, previews, or tiers. Never read it back as a list or dossier. " : "LONG-TERM MEMORY: When a SELAH MEMORY block appears below, it comes from their real reflection history (Foundation+ paid only — not free or trial). Use it to personalize every response; never read it back as a list or dossier. ") : ""}${memoryCtx}${minorSafety}${scriptureInReflect}
 
 Guide: Collect → Clarify → Check distorted thinking → Responsibility → One small move. When closing: say SESSION_COMPLETE then insight line, takeaway line, action line on separate lines. If crisis: say CRISIS_DETECTED only. No bullet points. End with a question unless you are closing with SESSION_COMPLETE.`;
 
@@ -9121,7 +9194,7 @@ Guide: Collect → Clarify → Check distorted thinking → Responsibility → O
         const parts=reply.replace("SESSION_COMPLETE","").trim().split("\n").filter(Boolean);
         const sum={insight:parts[0]||"",takeaway:parts[1]||"",action:parts[2]||""};
         setSummary(sum);
-        setPhase("complete");
+        setPhase("sessionWrap");
         const sessionPayload={
           id: Date.now(),
           date: new Date().toISOString(),
@@ -9207,12 +9280,59 @@ Guide: Collect → Clarify → Check distorted thinking → Responsibility → O
     );
   }
 
-  if(phase==="complete") return (
+  const handleContinueReflecting = () => {
+    if (reflectDailyLimit !== Infinity && reflectSessionsToday >= reflectDailyLimit) {
+      setPhase("sessionLimitReached");
+      return;
+    }
+    reset();
+  };
+
+  if (phase === "sessionLimitReached") {
+    return (
+      <div style={{ minHeight:"100vh",background:C.bgPrimary,fontFamily:font,
+        display:"flex",flexDirection:"column",alignItems:"center",
+        justifyContent:"center",padding:"40px 24px",textAlign:"center" }}>
+        <div style={{ maxWidth:"400px",width:"100%" }}>
+          <p style={{ color:C.textPrimary,fontSize:"clamp(16px,4vw,20px)",
+            fontWeight:"normal",margin:"0 0 24px",lineHeight:"1.5",fontStyle:"italic" }}>
+            You&apos;ve used all your reflections for today. Come back tomorrow.
+          </p>
+          <button type="button" onClick={()=>setScreen("home")} style={{
+            width:"100%",background:C.accent,border:"none",borderRadius:"3px",color:"#fff",
+            fontSize:"10px",letterSpacing:"3px",textTransform:"uppercase",padding:"14px",
+            cursor:"pointer",fontFamily:font,fontStyle:"italic" }}>
+            Go home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if(phase==="sessionWrap") return (
     <div style={{ minHeight:"100vh",background:C.bgPrimary,fontFamily:font,
       display:"flex",flexDirection:"column",alignItems:"center",
       justifyContent:"center",padding:"40px 24px",textAlign:"center" }}>
       <div style={{ maxWidth:"400px",width:"100%" }}>
         <WaveLogo size={36} color={C.accent}/>
+        <p style={{ color:C.textPrimary,fontSize:"clamp(17px,4vw,21px)",
+          fontWeight:"normal",margin:"0 0 20px",lineHeight:"1.45",fontStyle:"italic" }}>
+          That&apos;s your reflection for this session.
+        </p>
+        <div style={{ display:"flex",gap:"10px",marginBottom:"24px" }}>
+          <button type="button" onClick={()=>setScreen("home")} style={{ flex:1,background:C.bgSecondary,
+            border:`1px solid ${C.border}`,borderRadius:"3px",color:C.textSoft,
+            fontSize:"10px",letterSpacing:"2px",textTransform:"uppercase",padding:"14px",
+            cursor:"pointer",fontFamily:font,fontStyle:"italic" }}>
+            I&apos;m done for now
+          </button>
+          <button type="button" onClick={handleContinueReflecting} style={{ flex:1,background:C.accent,border:"none",
+            borderRadius:"3px",color:"#fff",fontSize:"10px",letterSpacing:"2px",
+            textTransform:"uppercase",padding:"14px",cursor:"pointer",
+            fontFamily:font,fontStyle:"italic" }}>
+            Continue reflecting
+          </button>
+        </div>
         <p style={{ color:C.accent,fontSize:"10px",letterSpacing:"3px",
           textTransform:"uppercase",fontStyle:"italic",margin:"14px 0 8px" }}>Session Complete</p>
         <h1 style={{ color:C.textPrimary,fontSize:"clamp(18px,4vw,24px)",
@@ -9244,16 +9364,6 @@ Guide: Collect → Clarify → Check distorted thinking → Responsibility → O
             </div>
           </div>
         )}
-        <div style={{ display:"flex",gap:"10px" }}>
-          <button onClick={()=>setScreen("home")} style={{ flex:1,background:C.bgSecondary,
-            border:`1px solid ${C.border}`,borderRadius:"3px",color:C.textSoft,
-            fontSize:"10px",letterSpacing:"3px",textTransform:"uppercase",padding:"14px",
-            cursor:"pointer",fontFamily:font }}>Home</button>
-          <button onClick={reset} style={{ flex:2,background:C.accent,border:"none",
-            borderRadius:"3px",color:"#fff",fontSize:"10px",letterSpacing:"3px",
-            textTransform:"uppercase",padding:"14px",cursor:"pointer",
-            fontFamily:font }}>Reflect Again</button>
-        </div>
       </div>
     </div>
   );
@@ -9284,7 +9394,7 @@ Guide: Collect → Clarify → Check distorted thinking → Responsibility → O
             takeaway:"You showed up. That's the first step.",
             action:"Take one slow breath before the day continues."};
           setSummary(sum);
-          setPhase("complete");
+          setPhase("sessionWrap");
           const sessionPayload={
             id: Date.now(),
             date: new Date().toISOString(),
@@ -9580,7 +9690,7 @@ Guide: Collect → Clarify → Check distorted thinking → Responsibility → O
           Begin Reflection
         </button>
         <p style={{ color:C.textMuted,fontSize:"10px",fontStyle:"italic",
-          textAlign:"center",margin:"10px 0 0" }}>5–10 minutes · Private & encrypted</p>
+          textAlign:"center",margin:"10px 0 0" }}>5–15 minutes · Private & encrypted</p>
       </div>
     </div>
   );
@@ -16688,6 +16798,89 @@ function countReflectSessionsToday(sessionHistory) {
   return (sessionHistory || []).filter((s) => s?.date && new Date(s.date).toDateString() === today).length;
 }
 
+const REFLECTION_HISTORY_KEY = "selah_reflection_history";
+
+function getReflectDailyLimit(tier, isTrialActive) {
+  if (isTrialActive) return 2;
+  const L = TIER_LEVELS[tier] ?? 0;
+  if (L >= TIER_LEVELS.deep) return Infinity;
+  if (L >= TIER_LEVELS.growth) return 5;
+  if (L >= TIER_LEVELS.foundation) return 3;
+  return 0;
+}
+
+function isReflectDailyLimitReached(sessionHistory, tier, isTrialActive) {
+  const lim = getReflectDailyLimit(tier, isTrialActive);
+  if (lim === Infinity) return false;
+  return countReflectSessionsToday(sessionHistory) >= lim;
+}
+
+function pruneReflectionHistoryEntries(arr) {
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  return (arr || []).filter((e) => e && typeof e.ts === "number" && e.ts >= cutoff);
+}
+
+function appendSelahReflectionHistory(entry) {
+  try {
+    let raw = [];
+    try {
+      raw = JSON.parse(localStorage.getItem(REFLECTION_HISTORY_KEY) || "[]");
+    } catch {
+      raw = [];
+    }
+    if (!Array.isArray(raw)) raw = [];
+    raw.push({ ts: Date.now(), ...entry });
+    raw = pruneReflectionHistoryEntries(raw).sort((a, b) => b.ts - a.ts);
+    localStorage.setItem(REFLECTION_HISTORY_KEY, JSON.stringify(raw));
+  } catch (e) {
+    console.error("appendSelahReflectionHistory", e);
+  }
+}
+
+function loadDeepReflectionHistoryPromptBlock() {
+  try {
+    let raw = [];
+    try {
+      raw = JSON.parse(localStorage.getItem(REFLECTION_HISTORY_KEY) || "[]");
+    } catch {
+      raw = [];
+    }
+    if (!Array.isArray(raw)) return "";
+    const pruned = pruneReflectionHistoryEntries(raw);
+    if (!pruned.length) return "";
+    const lines = pruned
+      .map((e) => {
+        const d = new Date(e.ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+        const t = String(e.text || "").replace(/\s+/g, " ").trim();
+        return t ? `- ${d}: ${t.slice(0, 500)}` : null;
+      })
+      .filter(Boolean);
+    if (!lines.length) return "";
+    return `\n\nHere are this user's recent reflections from the past 30 days:\n${lines.join("\n")}\n\nUse this to make your response feel like you know them deeply. Reference specific things they've shared before when relevant.\n`;
+  } catch {
+    return "";
+  }
+}
+
+function buildVerseConnectionLine(onboardingAnswers) {
+  if (!onboardingAnswers || typeof onboardingAnswers !== "object") return "This verse is for what you're carrying today.";
+  const blob = [
+    onboardingAnswers.biggest,
+    Array.isArray(onboardingAnswers.reasons) ? onboardingAnswers.reasons.join(" ") : onboardingAnswers.reasons,
+    onboardingAnswers.needMost,
+    onboardingAnswers.pattern,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (/anxiet|worr|fear|stress|panic|overwhelm/.test(blob)) return "This verse is for what you're carrying today.";
+  if (/grief|loss|sad|depress|alone/.test(blob)) return "This verse meets you in what you're carrying today.";
+  if (/anger|rage|bitter|resent/.test(blob)) return "This verse speaks to the weight you're carrying today.";
+  if (/tired|exhaust|burnout|weary/.test(blob)) return "This verse is a quiet word for the weariness you're carrying today.";
+  if (/hope|peace|rest|calm/.test(blob)) return "This verse echoes what you're longing for today.";
+  return "This verse is for what you're carrying today.";
+}
+
 // Merge saved reflection archives from local + cloud (by session id).
 function mergeSavedReflections(local, remote) {
   const m = new Map();
@@ -16805,6 +16998,7 @@ useEffect(() => {
     return defaultJourneyProgress();
   });
   const [sessionHistory, setSessionHistory] = useState(has("sessionHistory") ? saved.sessionHistory : []);
+  const [reflectionHistoryTick, setReflectionHistoryTick] = useState(0);
   const [savedReflections, setSavedReflections] = useState(has("savedReflections") ? saved.savedReflections : []);
   const [assessmentResults, setAssessmentResults] = useState(has("assessmentResults") ? saved.assessmentResults : {});
   const [userEmail, setUserEmail] = useState(has("userEmail") ? saved.userEmail : null);
@@ -17403,6 +17597,33 @@ useEffect(() => {
             </div>
           );
         }
+        if (!isTrialActive && isReflectDailyLimitReached(sessionHistory, effectiveTier, isTrialActive)) {
+          const lim = getReflectDailyLimit(effectiveTier, isTrialActive);
+          return (
+            <div style={{ minHeight:"100vh", background:C.bgPrimary, fontFamily:font,
+              padding:"60px 20px", boxSizing:"border-box" }}>
+              <div style={{ maxWidth:"480px", margin:"0 auto" }}>
+                <button type="button" onClick={()=>setScreen("home")} style={{ background:"none",border:"none",
+                  cursor:"pointer",color:C.textMuted,fontSize:"20px",marginBottom:"20px" }}>←</button>
+                <div style={{ textAlign:"center", marginBottom:"24px" }}>
+                  <div style={{ fontSize:"40px", marginBottom:"12px" }}>🌿</div>
+                  <p style={{ color:C.amber, fontSize:"10px", letterSpacing:"2.5px", textTransform:"uppercase", fontStyle:"italic", margin:"0 0 8px" }}>Daily limit</p>
+                  <h1 style={{ color:C.textPrimary, fontSize:"clamp(18px,4vw,22px)", fontWeight:"normal", margin:"0 0 12px", lineHeight:1.4 }}>
+                    You’ve used all {lim} reflections for today
+                  </h1>
+                  <p style={{ color:C.textSoft, fontSize:"13px", fontStyle:"italic", lineHeight:1.85, margin:0 }}>
+                    Come back tomorrow. Deep tier subscribers have unlimited daily reflections.
+                  </p>
+                </div>
+                <button type="button" onClick={()=>setScreen("home")} style={{
+                  width:"100%", background:C.accent, border:"none", borderRadius:"3px", color:"#fff",
+                  fontSize:"10px", letterSpacing:"3px", textTransform:"uppercase", padding:"16px", cursor:"pointer", fontFamily:font, fontStyle:"italic" }}>
+                  Home
+                </button>
+              </div>
+            </div>
+          );
+        }
         return (
           <ReflectScreen C={SC} font={font} setScreen={setScreen}
             faithLevel={faithLevel} sessionCount={sessionCount} tone={tone}
@@ -17410,6 +17631,9 @@ useEffect(() => {
             tier={effectiveTier} sessionHistory={sessionHistory}
             isTrialActive={isTrialActive}
             moodHistory={moodHistory}
+            reflectionHistoryTick={reflectionHistoryTick}
+            reflectDailyLimit={getReflectDailyLimit(effectiveTier, isTrialActive)}
+            reflectSessionsToday={countReflectSessionsToday(sessionHistory)}
             seasonalContext={(seasonalMode && currentSeason?.reflectContext) ? currentSeason.reflectContext : null}
             onSessionComplete={(sessionData, transcript)=>{
               setSessionCount(s=>s+1);
@@ -17419,6 +17643,13 @@ useEffect(() => {
               if(sessionData) setSessionHistory(prev=>[sessionData,...prev].slice(0,50));
               if (sessionData && (TIER_LEVELS[effectiveTier]||0) >= TIER_LEVELS.foundation && !isTrialActive) {
                 saveReflectionSummary(sessionData, transcript);
+              }
+              if (sessionData && (TIER_LEVELS[effectiveTier]||0) >= TIER_LEVELS.deep && !isTrialActive) {
+                const text = [sessionData.insight, sessionData.takeaway, sessionData.action].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+                if (text) {
+                  appendSelahReflectionHistory({ text, category: sessionData.category || "" });
+                  setReflectionHistoryTick((t) => t + 1);
+                }
               }
             }}
             onboardingAnswers={onboardingAnswers} userName={userName}
